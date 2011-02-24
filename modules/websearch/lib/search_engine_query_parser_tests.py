@@ -21,6 +21,7 @@
 
 
 import unittest
+import datetime
 
 from invenio import search_engine_query_parser
 
@@ -556,6 +557,79 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
         """SPIRES search syntax - searching by date > 1978-10-21"""
         spi_search = "find date > 1978-10-21"
         inv_search = 'year:1978-10-21->9999'
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_today(self):
+        """SPIRES search syntax - searching by today"""
+        spi_search = "find date today"
+        inv_search = "year:" + datetime.datetime.strftime(datetime.datetime.today(), '%Y-%m-%d')
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_yesterday(self):
+        """SPIRES search syntax - searching by yesterday"""
+        import dateutil.relativedelta
+        spi_search = "find date yesterday"
+        inv_search = "year:" + datetime.datetime.strftime(datetime.datetime.today()+dateutil.relativedelta.relativedelta(days=-1), '%Y-%m-%d')
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_minus_days(self):
+        """SPIRES search syntax - searching by 2011-01-03 - 2"""
+        spi_search = "find date 2011-01-03 - 2"
+        inv_search = "year:2011-01"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_minus_days_with_month_wrap(self):
+        """SPIRES search syntax - searching by 2011-03-01 - 1"""
+        spi_search = "find date 2011-03-01 - 1"
+        inv_search = "year:2011-02-28"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_minus_days_with_year_wrap(self):
+        """SPIRES search syntax - searching by 2011-01-01 - 1"""
+        spi_search = "find date 2011-01-01 - 1"
+        inv_search = "year:2010-12-31"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_minus_days_with_leapyear_february(self):
+        """SPIRES search syntax - searching by 2008-03-01 - 1"""
+        spi_search = "find date 2008-03-01 - 1"
+        inv_search = "year:2008-02-29"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_minus_many_days(self):
+        """SPIRES search syntax - searching by 2011-02-24 - 946"""
+        spi_search = "find date 2011-02-24 - 946"
+        inv_search = "year:2008-07-23"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_plus_days(self):
+        """SPIRES search syntax - searching by 2011-01-03 + 2"""
+        spi_search = "find date 2011-01-01 + 2"
+        inv_search = "year:2011-01-03"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_plus_days_with_month_wrap(self):
+        """SPIRES search syntax - searching by 2011-03-31 + 2"""
+        spi_search = "find date 2011-03-31 + 2"
+        inv_search = "year:2011-04-02"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_plus_days_with_year_wrap(self):
+        """SPIRES search syntax - searching by 2011-12-31 + 1"""
+        spi_search = "find date 2011-12-31 + 1"
+        inv_search = "year:2012-01"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_plus_days_with_leapyear_february(self):
+        """SPIRES search syntax - searching by 2008-02-29 + 2"""
+        spi_search = "find date 2008-02-28 + 2"
+        inv_search = "year:2008-03"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_date_accept_date_plus_many_days(self):
+        """SPIRES search syntax - searching by 2011-02-24 + 666"""
+        spi_search = "find date 2011-02-24 + 666"
+        inv_search = "year:2012-12-21"
         self._compare_searches(inv_search, spi_search)
 
     if DATEUTIL_AVAILABLE:

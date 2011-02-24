@@ -26,7 +26,8 @@ import string
 from datetime import datetime
 
 try:
-    import dateutil.parser
+    from dateutil import parser as du_parser
+    from dateutil.relativedelta import relativedelta as du_delta
     GOT_DATEUTIL = True
 except ImportError:
     # Ok, no date parsing is possible, but continue anyway,
@@ -718,8 +719,19 @@ class SpiresToInvenioSyntaxConverter:
                         if re.match('[0-9]{1,4}$', datestamp):
                             isodates.append(datestamp)
                         else:
+                            if re.search('yesterday', datestamp):
+                                units = -1
+                            else:
+                                units = 0
+                            datestamp = re.sub('yesterday', 'today', datestamp)
+                            datestamp = re.sub('today', datetime.strftime(datetime.today(), '%Y-%m-%d'), datestamp)
+                            datemath = re.match(r'(?P<datestamp>.+)\s+(?P<operator>[-+])\s+(?P<units>\d+)', datestamp)
+                            if datemath:
+                                datestamp = datemath.group('datestamp')
+                                units += int(datemath.group('operator') + datemath.group('units'))
                             try:
-                                dtobj = dateutil.parser.parse(datestamp, default=DEFAULT)
+                                dtobj = du_parser.parse(datestamp, default=DEFAULT)
+                                dtobj = dtobj + du_delta(days=units)
                                 if dtobj.day == 1:
                                     isodates.append("%d-%02d" % (dtobj.year, dtobj.month))
                                 else:
@@ -732,7 +744,7 @@ class SpiresToInvenioSyntaxConverter:
                 position = match.end()
             result += query[position : ]
             return result
-
+	
         if GOT_DATEUTIL:
             query = mangle_with_dateutils(query)
         # else do nothing with the dates
