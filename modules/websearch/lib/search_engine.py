@@ -2509,7 +2509,7 @@ def create_nearest_terms_box(urlargd, p, f, t='w', n=5, ln=CFG_SITE_LANG, intro_
                         break
                 else:
                     if string.find(argd_px, f+':'+p) > -1:
-                        if string.find(term, ' ') > -1:
+                        if string.find(term.strip(), ' ') > -1:
                             term = '"' + term + '"'
                         argd[px] = string.replace(argd_px, f+':'+p, f+':'+term)
                         break
