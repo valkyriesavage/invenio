@@ -452,6 +452,7 @@ class SpiresToInvenioSyntaxConverter:
         'journal-page' : '773__c:',
         'jp' : '773__c:',
         # journal year
+        'journalyear' : '773__y:',
         'journal-year' : '773__y:',
         'jy' : '773__y:',
         # key

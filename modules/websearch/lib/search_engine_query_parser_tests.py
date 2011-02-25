@@ -558,6 +558,12 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
         inv_search = 'year:1976-04'
         self._compare_searches(inv_search, spi_search)
 
+    def test_journal_year(self):
+        """SPIRES search syntax - searching by journalyear 2000"""
+        spi_search = 'find journalyear 2000'
+        inv_search = '773__y:2000'
+        self._compare_searches(inv_search, spi_search)
+
     def test_date_by_lt_yr_mo(self):
         """SPIRES search syntax - searching by date < 1978-10-21"""
         spi_search = "find date < 1978-10-21"
