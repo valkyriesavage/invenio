@@ -21,55 +21,53 @@
 
 __revision__ = "$Id$"
 
-import time
 import cgi
-import string
-import re
 import locale
+import re
+import string
+import time
 from urllib import quote, urlencode
 from xml.sax.saxutils import escape as xml_escape
 
 from invenio.config import \
-     CFG_WEBSEARCH_LIGHTSEARCH_PATTERN_BOX_WIDTH, \
-     CFG_WEBSEARCH_SIMPLESEARCH_PATTERN_BOX_WIDTH, \
-     CFG_WEBSEARCH_ADVANCEDSEARCH_PATTERN_BOX_WIDTH, \
-     CFG_WEBSEARCH_AUTHOR_ET_AL_THRESHOLD, \
-     CFG_WEBSEARCH_USE_ALEPH_SYSNOS, \
-     CFG_WEBSEARCH_SPLIT_BY_COLLECTION, \
-     CFG_WEBSEARCH_DEF_RECORDS_IN_GROUPS, \
+     CFG_BIBINDEX_CHARS_PUNCTUATION, \
      CFG_BIBRANK_SHOW_READING_STATS, \
      CFG_BIBRANK_SHOW_DOWNLOAD_STATS, \
      CFG_BIBRANK_SHOW_DOWNLOAD_GRAPHS, \
      CFG_BIBRANK_SHOW_CITATION_LINKS, \
      CFG_BIBRANK_SHOW_CITATION_STATS, \
      CFG_BIBRANK_SHOW_CITATION_GRAPHS, \
-     CFG_WEBSEARCH_RSS_TTL, \
+     CFG_INSPIRE_SITE, \
      CFG_SITE_LANG, \
      CFG_SITE_NAME, \
      CFG_SITE_NAME_INTL, \
-     CFG_VERSION, \
-     CFG_SITE_URL, \
      CFG_SITE_SUPPORT_EMAIL, \
      CFG_SITE_ADMIN_EMAIL, \
-     CFG_INSPIRE_SITE, \
-     CFG_WEBSEARCH_DEFAULT_SEARCH_INTERFACE, \
-     CFG_WEBSEARCH_ENABLED_SEARCH_INTERFACES, \
-     CFG_WEBSEARCH_MAX_RECORDS_IN_GROUPS, \
-     CFG_BIBINDEX_CHARS_PUNCTUATION, \
+     CFG_SITE_URL, \
+     CFG_VERSION, \
      CFG_WEBCOMMENT_ALLOW_COMMENTS, \
      CFG_WEBCOMMENT_ALLOW_REVIEWS, \
+     CFG_WEBSEARCH_ADVANCEDSEARCH_PATTERN_BOX_WIDTH, \
+     CFG_WEBSEARCH_AUTHOR_ET_AL_THRESHOLD, \
+     CFG_WEBSEARCH_DEF_RECORDS_IN_GROUPS, \
+     CFG_WEBSEARCH_DEFAULT_SEARCH_INTERFACE, \
+     CFG_WEBSEARCH_ENABLED_SEARCH_INTERFACES, \
+     CFG_WEBSEARCH_LIGHTSEARCH_PATTERN_BOX_WIDTH, \
+     CFG_WEBSEARCH_MAX_RECORDS_IN_GROUPS, \
      CFG_WEBSEARCH_SHOW_COMMENT_COUNT, \
-     CFG_WEBSEARCH_SHOW_REVIEW_COUNT
+     CFG_WEBSEARCH_SHOW_REVIEW_COUNT, \
+     CFG_WEBSEARCH_SIMPLESEARCH_PATTERN_BOX_WIDTH, \
+     CFG_WEBSEARCH_SPLIT_BY_COLLECTION, \
+     CFG_WEBSEARCH_RSS_TTL, \
+     CFG_WEBSEARCH_USE_ALEPH_SYSNOS
 
+from invenio.bibrank_citation_searcher import get_cited_by_count
 from invenio.dbquery import run_sql
+from invenio.htmlutils import nmtoken_from_string
+from invenio.intbitset import intbitset
 from invenio.messages import gettext_set_language
 from invenio.urlutils import make_canonical_urlargd, drop_default_urlargd, create_html_link, create_url
-from invenio.htmlutils import nmtoken_from_string
 from invenio.webinterface_handler import wash_urlargd
-from invenio.bibrank_citation_searcher import get_cited_by_count
-
-from invenio.intbitset import intbitset
-
 from invenio.websearch_external_collections import external_collection_get_state, get_external_collection_engine
 from invenio.websearch_external_collections_utils import get_collection_id
 from invenio.websearch_external_collections_config import CFG_EXTERNAL_COLLECTION_MAXRESULTS
@@ -2261,9 +2259,11 @@ class Template:
         if action != _("Browse") and aas > -1:
 
             rgs = []
-            for i in [10, 25, 50, 100, 250, 500]:
-                if i <= CFG_WEBSEARCH_MAX_RECORDS_IN_GROUPS:
+            for i in [10, 25, 50, 100, 250, 500, 1000]:
+                if i < CFG_WEBSEARCH_MAX_RECORDS_IN_GROUPS:
                     rgs.append({ 'value' : i, 'text' : "%d %s" % (i, _("results"))})
+            rgs.append({ 'value' : CFG_WEBSEARCH_MAX_RECORDS_IN_GROUPS, 'text' : "%d %s" %\
+                        (CFG_WEBSEARCH_MAX_RECORDS_IN_GROUPS, _("results"))})
             # enrich sort fields list if we are sorting by some MARC tag:
             sort_fields = self._add_mark_to_field(value=sf, fields=sort_fields, ln=ln)
             # create sort by HTML box:

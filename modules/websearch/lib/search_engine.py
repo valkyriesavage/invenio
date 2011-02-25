@@ -29,14 +29,15 @@ __revision__ = "$Id$"
 import cgi
 import cStringIO
 import copy
-import string
+import datetime
 import os
 import re
+import string
+import sys
 import time
 import urllib
 import urlparse
 import zlib
-import sys
 
 if sys.hexversion < 0x2040000:
     # pylint: disable=W0622
@@ -45,9 +46,19 @@ if sys.hexversion < 0x2040000:
 
 ## import Invenio stuff:
 from invenio.config import \
+     CFG_ACCESS_CONTROL_LEVEL_ACCOUNTS, \
+     CFG_BIBFORMAT_HIDDEN_TAGS, \
+     CFG_BIBRANK_SHOW_CITATION_LINKS, \
+     CFG_BIBRANK_SHOW_DOWNLOAD_GRAPHS, \
+     CFG_BIBUPLOAD_EXTERNAL_SYSNO_TAG, \
+     CFG_BIBUPLOAD_SERIALIZE_RECORD_STRUCTURE, \
      CFG_CERN_SITE, \
      CFG_INSPIRE_SITE, \
+     CFG_LOGDIR, \
      CFG_OAI_ID_FIELD, \
+     CFG_SITE_LANG, \
+     CFG_SITE_NAME, \
+     CFG_SITE_URL, \
      CFG_WEBCOMMENT_ALLOW_REVIEWS, \
      CFG_WEBSEARCH_CALL_BIBFORMAT, \
      CFG_WEBSEARCH_CREATE_SIMILARLY_NAMED_AUTHORS_LINK_BOX, \
@@ -57,53 +68,44 @@ from invenio.config import \
      CFG_WEBSEARCH_USE_MATHJAX_FOR_FORMATS, \
      CFG_WEBSEARCH_USE_ALEPH_SYSNOS, \
      CFG_WEBSEARCH_DEF_RECORDS_IN_GROUPS, \
-     CFG_WEBSEARCH_FULLTEXT_SNIPPETS, \
-     CFG_BIBUPLOAD_SERIALIZE_RECORD_STRUCTURE, \
-     CFG_BIBUPLOAD_EXTERNAL_SYSNO_TAG, \
-     CFG_BIBRANK_SHOW_DOWNLOAD_GRAPHS, \
-     CFG_SITE_LANG, \
-     CFG_SITE_NAME, \
-     CFG_LOGDIR, \
-     CFG_BIBFORMAT_HIDDEN_TAGS, \
-     CFG_SITE_URL, \
-     CFG_ACCESS_CONTROL_LEVEL_ACCOUNTS, \
-     CFG_BIBRANK_SHOW_CITATION_LINKS
-from invenio.search_engine_config import InvenioWebSearchUnknownCollectionError
-from invenio.bibrecord import create_record, record_get_field_instances
-from invenio.bibrank_record_sorter import get_bibrank_methods, rank_records, is_method_valid
-from invenio.bibrank_downloads_similarity import register_page_view_event, calculate_reading_similarity_list
-from invenio.bibindex_engine_stemmer import stem
-from invenio.bibindex_engine_tokenizer import wash_author_name, author_name_requires_phrase_search
-from invenio.bibformat import format_record, format_records, get_output_format_content_type, create_excel
-from invenio.bibformat_config import CFG_BIBFORMAT_USE_OLD_BIBFORMAT
-from invenio.bibrank_downloads_grapher import create_download_history_graph_and_box
-from invenio.data_cacher import DataCacher
-from invenio.websearch_external_collections import print_external_results_overview, perform_external_collection_search
+     CFG_WEBSEARCH_FULLTEXT_SNIPPETS
 from invenio.access_control_admin import acc_get_action_id
 from invenio.access_control_config import VIEWRESTRCOLL, \
     CFG_ACC_GRANT_AUTHOR_RIGHTS_TO_EMAILS_IN_TAGS
-from invenio.websearchadminlib import get_detailed_page_tabs
-from invenio.intbitset import intbitset as HitSet
-from invenio.dbquery import DatabaseError, deserialize_via_marshal
 from invenio.access_control_engine import acc_authorize_action
+from invenio.bibformat import format_record, format_records, get_output_format_content_type, create_excel
+from invenio.bibformat_config import CFG_BIBFORMAT_USE_OLD_BIBFORMAT
+from invenio.bibindex_engine_stemmer import stem
+from invenio.bibindex_engine_tokenizer import wash_author_name, author_name_requires_phrase_search
+from invenio.bibrank_citation_grapher import create_citation_history_graph_and_box
+from invenio.bibrank_citation_searcher import get_cited_by_count, calculate_cited_by_list, \
+    calculate_co_cited_with_list, get_records_with_num_cites, get_self_cited_by, \
+    get_refersto_hitset, get_citedby_hitset
+from invenio.bibrank_downloads_grapher import create_download_history_graph_and_box
+from invenio.bibrank_downloads_similarity import register_page_view_event, calculate_reading_similarity_list
+from invenio.bibrank_record_sorter import get_bibrank_methods, rank_records, is_method_valid
+from invenio.bibrecord import create_record, record_get_field_instances
+from invenio.data_cacher import DataCacher
+from invenio.dbquery import DatabaseError, deserialize_via_marshal, run_sql, get_table_update_time
 from invenio.errorlib import register_exception
+from invenio.intbitset import intbitset as HitSet
+from invenio.messages import gettext_set_language
+from invenio.search_engine_config import InvenioWebSearchUnknownCollectionError
+from invenio.search_engine_query_parser import SearchQueryParenthesisedParser, \
+    SpiresToInvenioSyntaxConverter
 from invenio.textutils import encode_for_xml, wash_for_utf8
+from invenio.webpage import pageheaderonly, pagefooteronly, create_error_box
+from invenio.websearch_external_collections import print_external_results_overview, \
+         perform_external_collection_search, calculate_hosted_collections_results, \
+         do_calculate_hosted_collections_results
+from invenio.websearch_external_collections_config import CFG_HOSTED_COLLECTION_TIMEOUT_ANTE_SEARCH, \
+     CFG_HOSTED_COLLECTION_TIMEOUT_POST_SEARCH, CFG_EXTERNAL_COLLECTION_MAXRESULTS
+from invenio.websearchadminlib import get_detailed_page_tabs
+from invenio.webuser import getUid, collect_user_info
 
 import invenio.template
 webstyle_templates = invenio.template.load('webstyle')
 webcomment_templates = invenio.template.load('webcomment')
-
-from invenio.bibrank_citation_searcher import get_cited_by_count, calculate_cited_by_list, \
-    calculate_co_cited_with_list, get_records_with_num_cites, get_self_cited_by, \
-    get_refersto_hitset, get_citedby_hitset
-from invenio.bibrank_citation_grapher import create_citation_history_graph_and_box
-
-from invenio.dbquery import run_sql, get_table_update_time
-from invenio.webuser import getUid, collect_user_info
-from invenio.webpage import pageheaderonly, pagefooteronly, create_error_box
-from invenio.messages import gettext_set_language
-from invenio.search_engine_query_parser import SearchQueryParenthesisedParser, \
-    SpiresToInvenioSyntaxConverter
 
 from invenio import webinterface_handler_config as apache
 
@@ -113,10 +115,6 @@ try:
 except:
     pass
 
-from invenio.websearch_external_collections import calculate_hosted_collections_results, do_calculate_hosted_collections_results
-from invenio.websearch_external_collections_config import CFG_HOSTED_COLLECTION_TIMEOUT_ANTE_SEARCH
-from invenio.websearch_external_collections_config import CFG_HOSTED_COLLECTION_TIMEOUT_POST_SEARCH
-from invenio.websearch_external_collections_config import CFG_EXTERNAL_COLLECTION_MAXRESULTS
 
 VIEWRESTRCOLL_ID = acc_get_action_id(VIEWRESTRCOLL)
 
@@ -3426,13 +3424,28 @@ def print_records(req, recIDs, jrec=1, rg=10, format='hb', ot='', ln=CFG_SITE_LA
             # print records
             recIDs_to_print = [recIDs[x] for x in range(irec_max, irec_min, -1)]
 
+            if jrec + rg < len(recIDs):
+                new_uri = req.unparsed_uri
+                has_jrec = re.search(r'&jrec=(?P<curjrec>\d+)', new_uri)
+                if has_jrec:
+                    new_uri = new_uri.replace(r'&jrec=\d+', '&jrec=' + str(int(has_jrec.group('curjrec')) + rg))
+                else:
+                    new_uri = new_uri + '&jrec=' + str(rg+1)
+                next_page_link = CFG_SITE_URL + new_uri
+                epilogue='\n<!-- Search-Engine-Next-Results: ' + next_page_link + ' -->\n'
+            else:
+                epilogue=''
+
             format_records(recIDs_to_print,
                            format,
                            ln=ln,
                            search_pattern=search_pattern,
-                           record_separator="\n",
+                           record_prefix=lambda x: "\n<!-- Search-Engine-Result-Number: " + str(x+jrec) + " of " + str(nb_found) + " -->\n",
+                           record_separator='\n',
                            user_info=user_info,
+                           epilogue=epilogue,
                            req=req)
+
             # print footer if needed
             if print_records_epilogue_p:
                 print_records_epilogue(req, format)
@@ -4414,9 +4427,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
         elif of == "id":
             return []
         elif of.startswith("x"):
-            # Print empty, but valid XML
-            print_records_prologue(req, of)
-            print_records_epilogue(req, of)
+            _print_empty_but_valid_XML(req, of)
             return page_end(req, of, ln)
         else:
             return page_end(req, of, ln)
@@ -4495,9 +4506,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             if of == "id":
                 return []
             elif of.startswith("x"):
-                # Print empty, but valid XML
-                print_records_prologue(req, of)
-                print_records_epilogue(req, of)
+                _print_empty_but_valid_XML(req, of)
             elif of.startswith("h"):
                 if req.header_only:
                     raise apache.SERVER_RETURN, apache.HTTP_NOT_FOUND
@@ -4522,9 +4531,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             if of.startswith("h"):
                 req.write(create_error_box(req, verbose=verbose, ln=ln))
             elif of.startswith("x"):
-                # Print empty, but valid XML
-                print_records_prologue(req, of)
-                print_records_epilogue(req, of)
+                _print_empty_but_valid_XML(req, of)
             return page_end(req, of, ln)
 
     elif rm and p.startswith("recid:"):
@@ -4544,9 +4551,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             if of == "id":
                 return []
             elif of.startswith("x"):
-                # Print empty, but valid XML
-                print_records_prologue(req, of)
-                print_records_epilogue(req, of)
+                _print_empty_but_valid_XML(req, of)
         else:
             # record well exists, so find similar ones to it
             t1 = os.times()[4]
@@ -4577,9 +4582,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                 if of == "id":
                     return []
                 elif of.startswith("x"):
-                    # Print empty, but valid XML
-                    print_records_prologue(req, of)
-                    print_records_epilogue(req, of)
+                    _print_empty_but_valid_XML(req, of)
 
     elif p.startswith("cocitedwith:"):  #WAS EXPERIMENTAL
         ## 3-terter - cited by search needed
@@ -4595,9 +4598,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             if of == "id":
                 return []
             elif of.startswith("x"):
-                # Print empty, but valid XML
-                print_records_prologue(req, of)
-                print_records_epilogue(req, of)
+                _print_empty_but_valid_XML(req, of)
         else:
             # record well exists, so find co-cited ones:
             t1 = os.times()[4]
@@ -4623,9 +4624,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                 if of == "id":
                     return []
                 elif of.startswith("x"):
-                    # Print empty, but valid XML
-                    print_records_prologue(req, of)
-                    print_records_epilogue(req, of)
+                    _print_empty_but_valid_XML(req, of)
     else:
         ## 3 - common search needed
         query_in_cache = False
@@ -4694,9 +4693,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                     if of.startswith("h"):
                         perform_external_collection_search(req, cc, [p, p1, p2, p3], f, ec, verbose, ln, selected_external_collections_infos)
                     elif of.startswith("x"):
-                        # Print empty, but valid XML
-                        print_records_prologue(req, of)
-                        print_records_epilogue(req, of)
+                        _print_empty_but_valid_XML(req, of)
                     return page_end(req, of, ln)
                 if p2:
                     results_tmp = search_pattern_parenthesised(req, p2, f2, m2, ap=ap, of=of, verbose=verbose, ln=ln)
@@ -4713,9 +4710,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                         if of.startswith("h"):
                             perform_external_collection_search(req, cc, [p, p1, p2, p3], f, ec, verbose, ln, selected_external_collections_infos)
                         elif of.startswith("x"):
-                            # Print empty, but valid XML
-                            print_records_prologue(req, of)
-                            print_records_epilogue(req, of)
+                            _print_empty_but_valid_XML(req, of)
                         return page_end(req, of, ln)
                 if p3:
                     results_tmp = search_pattern_parenthesised(req, p3, f3, m3, ap=ap, of=of, verbose=verbose, ln=ln)
@@ -4734,9 +4729,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                     req.write(create_error_box(req, verbose=verbose, ln=ln))
                     perform_external_collection_search(req, cc, [p, p1, p2, p3], f, ec, verbose, ln, selected_external_collections_infos)
                 elif of.startswith("x"):
-                    # Print empty, but valid XML
-                    print_records_prologue(req, of)
-                    print_records_epilogue(req, of)
+                    _print_empty_but_valid_XML(req, of)
 
                 return page_end(req, of, ln)
         else:
@@ -4765,9 +4758,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             if of.startswith("h"):
                 perform_external_collection_search(req, cc, [p, p1, p2, p3], f, ec, verbose, ln, selected_external_collections_infos)
             elif of.startswith("x"):
-                # Print empty, but valid XML
-                print_records_prologue(req, of)
-                print_records_epilogue(req, of)
+                _print_empty_but_valid_XML(req, of)
             return page_end(req, of, ln)
 
         # store this search query results into search results cache if needed:
@@ -4798,9 +4789,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             if of.startswith("h"):
                 perform_external_collection_search(req, cc, [p, p1, p2, p3], f, ec, verbose, ln, selected_external_collections_infos)
             if of.startswith("x"):
-                # Print empty, but valid XML
-                print_records_prologue(req, of)
-                print_records_epilogue(req, of)
+                _print_empty_but_valid_XML(req, of)
             return page_end(req, of, ln)
 
         # search stage 5: apply search option limits and restrictions:
@@ -4852,9 +4841,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                 if of.startswith("h"):
                     perform_external_collection_search(req, cc, [p, p1, p2, p3], f, ec, verbose, ln, selected_external_collections_infos)
                 if of.startswith("x"):
-                    # Print empty, but valid XML
-                    print_records_prologue(req, of)
-                    print_records_epilogue(req, of)
+                    _print_empty_but_valid_XML(req, of)
                 return page_end(req, of, ln)
 
         t2 = os.times()[4]
@@ -4904,9 +4891,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             if of.startswith("h"):
                 print_warning(req, "No match found, please enter different search terms.")
             elif of.startswith("x"):
-                # Print empty, but valid XML
-                print_records_prologue(req, of)
-                print_records_epilogue(req, of)
+                _print_empty_but_valid_XML(req, of)
         else:
             # yes, some hits found: good!
             # collection list may have changed due to not-exact-match-found policy so check it out:
@@ -4933,7 +4918,9 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                     selected_external_collections_infos = print_external_results_overview(req, cc, [p, p1, p2, p3], f, ec, verbose, ln)
             # print number of hits found for XML outputs:
             if of.startswith("x"):
-                req.write("<!-- Search-Engine-Total-Number-Of-Results: %s -->\n" % results_final_nb_total)
+                req.write("<!-- Search-Engine-Query: %s%s -->\n" % (CFG_SITE_URL, req.unparsed_uri))
+                req.write("<!-- Search-Engine-Total-Number-Of-Results: %s -->\n" % str(results_final_nb_total))
+                req.write("<!-- Search-Engine-Date: %s -->\n" % datetime.datetime.strftime(datetime.datetime.today(), "%Y-%m-%d %H:%M:%S"))
             # print records:
             if of in ['hcs']:
                 # feed the current search to be summarized:
@@ -5288,33 +5275,7 @@ def profile(p="", f="", c=CFG_SITE_NAME):
     p.strip_dirs().sort_stats("cumulative").print_stats()
     return 0
 
-## test cases:
-#print wash_colls(CFG_SITE_NAME,"Library Catalogue", 0)
-#print wash_colls("Periodicals & Progress Reports",["Periodicals","Progress Reports"], 0)
-#print wash_field("wau")
-#print print_record(20,"tm","001,245")
-#print create_opft_search_units(None, "PHE-87-13","reportnumber")
-#print ":"+wash_pattern("* and % doo * %")+":\n"
-#print ":"+wash_pattern("*")+":\n"
-#print ":"+wash_pattern("ellis* ell* e*%")+":\n"
-#print run_sql("SELECT name,dbquery from collection")
-#print get_index_id("author")
-#print get_coll_ancestors("Theses")
-#print get_coll_sons("Articles & Preprints")
-#print get_coll_real_descendants("Articles & Preprints")
-#print get_collection_reclist("Theses")
-#print log(sys.stdin)
-#print search_unit_in_bibrec('2002-12-01','2002-12-12')
-#print get_nearest_terms_in_bibxxx("ellis", "author", 5, 5)
-#print call_bibformat(68, "HB_FLY")
-#print get_fieldvalues(10, "980__a")
-#print get_fieldvalues_alephseq_like(10,"001___")
-#print get_fieldvalues_alephseq_like(10,"980__a")
-#print get_fieldvalues_alephseq_like(10,"foo")
-#print get_fieldvalues_alephseq_like(10,"-1")
-#print get_fieldvalues_alephseq_like(10,"99")
-#print get_fieldvalues_alephseq_like(10,["001", "980"])
-
-## profiling:
-#profile("of the this")
-#print perform_request_search(p="ellis")
+def _print_empty_but_valid_XML(req, of):
+    """Print empty, but valid XML"""
+    print_records_prologue(req, of)
+    print_records_epilogue(req, of)
