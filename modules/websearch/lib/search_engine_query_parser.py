@@ -256,18 +256,12 @@ class SearchQueryParenthesisedParser(object):
 
         querytokens = []
         current_position = 0
-        re_quotepairs = re.compile(r'[^\\](".*?[^\\]")|[^\\](\'.*?[^\\]\')')
 
-        for match in re_quotepairs.finditer(query):
-            # special case for when our regexp captures a single char before
-            # the quotes.  This is faster (in development time and code)
-            # than a much more complicated and complete regexp or using an
-            # FSM for quote balancing.  XXX: But is there a better way?
+        re_quotes_match = re.compile(r'(?![\\])(".*?[^\\]")' + r"|(?![\\])('.*?[^\\]')")
+
+        for match in re_quotes_match.finditer(query):
             match_start = match.start()
             quoted_region = match.group(0).strip()
-            if quoted_region[0] not in "'\"":
-                match_start += 1            # capture char 0 in unquoted below
-                quoted_region = quoted_region[1:]
 
             # clean the content after the previous quotes and before current quotes
             unquoted = query[current_position : match_start]
@@ -277,7 +271,7 @@ class SearchQueryParenthesisedParser(object):
             # labels, e.g., 'title:"compton scattering"' becomes
             # ['title:', '"compton scattering"'] rather than ['title:"compton scattering"']
             # This corrects for that.
-            if querytokens[-1][-1] == ':':
+            if querytokens and querytokens[0] and querytokens[-1][-1] == ':':
                 querytokens[-1] += quoted_region
             else:
                 # add our newly tokenized content to the token list
@@ -571,7 +565,7 @@ class SpiresToInvenioSyntaxConverter:
 
         # regular expression that matches the contents in single and double quotes
         # taking in mind if they are escaped.
-        self._re_quotes_match = re.compile('[^\\\\](".*?[^\\\\]")|[^\\\\](\'.*?[^\\\\]\')')
+        self._re_quotes_match = re.compile(r'(?![\\])(".*?[^\\]")' + r"|(?![\\])('.*?[^\\]')")
 
         # match cases where a keyword distributes across a conjunction
         self._re_distribute_keywords = re.compile(r'\b(?P<keyword>\S*:)(?P<content>.+?)\s*(?P<combination>and not | and | or | not )\s*(?P<last_content>[^:]*?)(?= and not | and | or | not |$)', re.IGNORECASE)
