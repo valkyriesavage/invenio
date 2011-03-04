@@ -438,6 +438,14 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
         spi_search = "find t 'compton scattering' and a mele"
         self._compare_searches(inv_search, spi_search)
 
+    def test_search_with_trailing_dot(self):
+        """SPIRES search syntax - find t Gamma Rays From The Galactic Center and the WMAP Haze."""
+        inv_search = "title:Gamma Rays from the Galactic Center and the WMAP Haze"
+        inv_result = perform_request_search(p=inv_search)
+        spi_search = "find t Gamma Rays from the Galactic Center and the WMAP Haze."
+        spi_result = perform_request_search(p=spi_search)
+        self.assertEqual(spi_result, inv_result)
+
     def test_fin_to_find_trans(self):
         """SPIRES search syntax - fin a ellis, j == find a ellis, j"""
         fin_search = "fin a ellis, j"

@@ -659,6 +659,9 @@ class SpiresToInvenioSyntaxConverter:
             # remove FIND in the beginning of the query as it is not necessary in Invenio
             query = query[4:]
             query = query.strip()
+            # remove trailing . as it is not necessary or desirable in Invenio
+            if query.endswith('.'):
+               query = query[:-1]
 
         return query
 
