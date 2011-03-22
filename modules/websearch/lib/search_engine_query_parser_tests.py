@@ -385,6 +385,12 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
         spi_search = 'find a alvarez gaume, j r r'
         self._compare_searches(inv_search, spi_search)
 
+    def test_author_extreme_compound_last_name(self):
+        """SPIRES search syntax - find a e do Couto e Silva"""
+        inv_search = 'author"do couto e silva, e*"'
+        spi_search = 'find a e do couto e silva'
+        self._compare_searches(inv_search, spi_search)
+
     def test_author_full_initial(self):
         """SPIRES search syntax - find a klebanov, ig.r."""
         inv_search = 'author:"klebanov, ig* r*" or exactauthor:"klebanov, i r"'
