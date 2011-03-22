@@ -174,8 +174,7 @@ class SearchQueryParenthesisedParser(object):
         maxdepth = 0
         depth0_pairs = 0
         good_depth = True
-        for i in range(len(token_list)):
-            token = token_list[i]
+        for token in token_list:
             if token == '(':
                 if depth == 0:
                     depth0_pairs += 1
@@ -463,6 +462,7 @@ class SpiresToInvenioSyntaxConverter:
         'documents' : '970__a:',
         # keywords
         'k' : 'keyword:',
+        'keyword' : 'keyword:',
         'keywords' : 'keyword:',
         'kw' : 'keyword:',
         # note
@@ -582,7 +582,7 @@ class SpiresToInvenioSyntaxConverter:
         self._re_topcite_match = re.compile(r'(?P<x>cited:\d+)\+')
 
         # regular expression that matches author patterns
-        self._re_author_match = re.compile(r'\bauthor:\s*(?P<name>.+?)\s*(?= and not | and | or | not |$)', re.IGNORECASE)
+        self._re_author_match = re.compile(r'\bauthor:\s*(?P<name>[^()]+?)\s*(?= and not | and | or | not |$)', re.IGNORECASE)
 
         # regular expression that matches exact author patterns
         # the group defined in this regular expression is used in method
@@ -615,6 +615,11 @@ class SpiresToInvenioSyntaxConverter:
         self._re_pattern_regexp_quotes = re.compile("\/(.*?)\/")
         self._re_pattern_space = re.compile("__SPACE__")
 
+        # clean up the search, just in case
+        self._re_pattern_many_spaces = re.compile(r'\s{2,}')
+        self._re_pattern_space_before_paren = re.compile(r' \)')
+        self._re_pattern_space_after_paren = re.compile(r'\( ')
+
     def is_applicable(self, query):
         """Is this converter applicable to this query?
 
@@ -642,6 +647,12 @@ class SpiresToInvenioSyntaxConverter:
             # and the DATE keyword is not match in DATE BEFORE or DATE AFTER
             query = self._convert_spires_date_before_to_invenio_span_query(query)
             query = self._convert_spires_date_after_to_invenio_span_query(query)
+
+            # clean unneccessary spaces out of the search; these spaces in particular confuse
+            # author searches because of the way names are expanded
+            query = self._re_pattern_many_spaces.sub(' ', query)
+            query = self._re_pattern_space_before_paren.sub(')', query)
+            query = self._re_pattern_space_after_paren.sub('(', query)
 
             # call to _replace_spires_keywords_with_invenio_keywords should be at the
             # beginning because the next methods use the result of the replacement
@@ -875,7 +886,7 @@ class SpiresToInvenioSyntaxConverter:
         current_position = 0
         for match in self._re_author_match.finditer(query):
             result += query[current_position : match.start() ]
-            scanned_name = NameScanner.scan(match.group('name'))
+            scanned_name = NameScanner.scan(match.group('name').strip())
             author_atoms = self._create_author_search_pattern_from_fuzzy_name_dict(scanned_name)
             if author_atoms.find(' ') == -1:
                 result += author_atoms + ' '
