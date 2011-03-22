@@ -159,6 +159,11 @@ class TestSearchQueryParenthesisedParser(unittest.TestCase):
         self.assertEqual(self.parser.parse_query('"expr1" (expr2) expr3'),
                          ['+', '"expr1"', '+', 'expr2', '+', 'expr3'])
 
+    def test_sqpp_quoted_expr1_arrow_quoted_expr2(self):
+        """SearchQueryParenthesisedParser = \"expr1\"->\"expr2\""""
+        self.assertEqual(self.parser.parse_query('"expr1"->"expr2"'),
+                         ['+', '"expr1"', '+', '->', '+', '"expr2"'])
+
     def test_sqpp_paren_expr1_expr2_paren_expr3_or_expr4(self):
         """SearchQueryParenthesisedParser - (expr1) expr2 (expr3) | expr4"""
         # test parsing of queries with missing operators.
@@ -283,6 +288,13 @@ class TestSearchQueryParenthesisedParser(unittest.TestCase):
         """SearchQueryParenthesisedParser - Test (ellis )"""
         self.assertEqual(self.parser.parse_query('(ellis )'),
                          ['+', 'ellis'])
+
+    def test_sqpp_no_outside_chars(self):
+        """SearchQueryParenthesisedParser - Test (1) and (2,Z)"""
+        self.assertEqual(self.parser.parse_query('(1)'),
+                         ['+', '1'])
+        self.assertEqual(self.parser.parse_query('(2,Z)'),
+                         ['+', '2,z'])
 
     def test_sqpp_nested_U1_or_SL2(self):
         """SearchQueryParenthesisedParser - Test (U(1) or SL(2,Z))"""
@@ -774,6 +786,30 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
         converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
         inv_search = converter.is_applicable("t:p a:c")
         self.assertEqual(inv_search, False)
+
+    def test_excessive_space_use(self):
+        """SPIRES search syntax - find           a         ellis"""
+        spi_search = "find            a         ellis"
+        inv_search = "author:ellis"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_spires_syntax_with_strange_parens(self):
+        """SPIRES search syntax - find (keyword dog)"""
+        spi_search = 'find (keyword dog)'
+        inv_search = 'keyword:dog'
+        self._compare_searches(inv_search, spi_search)
+
+    def test_spires_syntax_with_strange_parens_author_search(self):
+        """SPIRES search syntax - find (a hawking )"""
+        spi_search = "find (a hawking )"
+        inv_search = "author:hawking"
+        self._compare_searches(inv_search, spi_search)
+
+    def test_spires_syntax_with_strange_parens_and_or(self):
+        """SPIRES search syntax - find (a hawking or ellis)"""
+        spi_search = 'find (a hawking or ellis)'
+        inv_search = 'author:hawking | author:ellis'
+        self._compare_searches(inv_search, spi_search)
 
     def test_spires_keyword_distribution_before_conjunctions(self):
         """SPIRES search syntax - test find journal phys.lett 0903 024 => journal:phys.lett and journal:0903 and journal:024"""
