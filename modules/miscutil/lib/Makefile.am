@@ -18,46 +18,48 @@
 pylibdir = $(libdir)/python/invenio
 
 pylib_DATA = __init__.py \
-             errorlib.py \
-             errorlib_tests.py \
-             errorlib_webinterface.py \
-             errorlib_regression_tests.py \
+			 listutils.py \
+			 listutils_tests.py \
+             asyncproc.py \
              data_cacher.py \
+             dateutils.py \
+             dateutils_tests.py \
              dbdump.py \
              dbquery.py \
              dbquery_tests.py \
+             errorlib.py \
+             errorlib_regression_tests.py \
+             errorlib_tests.py \
+             errorlib_webinterface.py \
+             htmlutils.py \
+             htmlutils_tests.py \
+             intbitset_tests.py \
+             invenio_connector.py \
+             inveniocfg.py \
              logicutils.py \
              logicutils_tests.py \
              mailutils.py \
-             miscutil_config.py \
              messages.py \
              messages_tests.py \
-             textutils.py \
-             textutils_tests.py \
-             dateutils.py \
-             dateutils_tests.py \
-             htmlutils.py \
-             htmlutils_tests.py \
-             testutils.py \
-             testutils_regression_tests.py \
-             invenio_connector.py \
-             urlutils.py \
-             urlutils_tests.py \
-             w3c_validator.py \
-             intbitset_tests.py \
-             inveniocfg.py \
-             shellutils.py \
-             shellutils_tests.py \
-             pluginutils.py \
-             pluginutils_tests.py \
-             asyncproc.py \
+             miscutil_config.py \
              plotextractor.py \
+             plotextractor_config.py \
              plotextractor_converter.py \
              plotextractor_getter.py \
              plotextractor_output_utils.py \
              plotextractor_tests.py \
-             plotextractor_config.py \
-             solrutils.py
+             pluginutils.py \
+             pluginutils_tests.py \
+             shellutils.py \
+             shellutils_tests.py \
+             solrutils.py \
+             testutils.py \
+             testutils_regression_tests.py \
+             textutils.py \
+             textutils_tests.py \
+             urlutils.py \
+             urlutils_tests.py \
+             w3c_validator.py
 
 noinst_DATA = testimport.py \
               kwalitee.py \

@@ -18,19 +18,14 @@
 pylibdir = $(libdir)/python/invenio
 
 pylib_DATA = \
-	websearchadminlib.py \
-	websearch_templates.py \
-	websearch_webinterface.py \
-	websearch_regression_tests.py \
 	search_engine.py \
 	search_engine_config.py \
-	search_engine_tests.py \
 	search_engine_query_parser.py \
 	search_engine_query_parser_tests.py \
-	websearch_webcoll.py \
-	websearchadmin_regression_tests.py \
-	websearch_external_collections.py \
 	search_engine_summarizer.py \
+	search_engine_tests.py \
+	search_engine_utils.py \
+	websearch_external_collections.py \
 	websearch_external_collections_config.py \
 	websearch_external_collections_getter.py \
 	websearch_external_collections_getter_tests.py \
@@ -38,7 +33,13 @@ pylib_DATA = \
 	websearch_external_collections_searcher.py \
 	websearch_external_collections_templates.py \
 	websearch_external_collections_tests.py \
-	websearch_external_collections_utils.py 
+	websearch_external_collections_utils.py \
+	websearch_regression_tests.py \
+	websearch_templates.py \
+	websearch_webcoll.py \
+	websearch_webinterface.py \
+	websearchadmin_regression_tests.py \
+	websearchadminlib.py
 
 EXTRA_DIST = $(pylib_DATA)
 

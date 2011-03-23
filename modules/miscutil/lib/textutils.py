@@ -23,9 +23,10 @@ Functions useful for text wrapping (in a box) and indenting.
 
 __revision__ = "$Id$"
 
-import sys
 import re
+import sys
 import textwrap
+
 import invenio.template
 
 CFG_WRAP_TEXT_IN_A_BOX_STYLES = {
@@ -365,3 +366,95 @@ def remove_line_breaks(text):
     separator', 'paragraph separator', and 'next line' characters.
     """
     return unicode(text, 'utf-8').replace('\f', '').replace('\n', '').replace('\r', '').replace(u'\xe2\x80\xa8', '').replace(u'\xe2\x80\xa9', '').replace(u'\xc2\x85', '').encode('utf-8')
+
+# pre-compile a bunch of regexps for strip_accents
+# unicode
+_re_unicode_lowercase_a = re.compile(unicode(r"(?u)[áàäâãå]", "utf-8"))
+_re_unicode_lowercase_ae = re.compile(unicode(r"(?u)[æ]", "utf-8"))
+_re_unicode_lowercase_e = re.compile(unicode(r"(?u)[éèëê]", "utf-8"))
+_re_unicode_lowercase_i = re.compile(unicode(r"(?u)[íìïî]", "utf-8"))
+_re_unicode_lowercase_o = re.compile(unicode(r"(?u)[óòöôõø]", "utf-8"))
+_re_unicode_lowercase_u = re.compile(unicode(r"(?u)[úùüû]", "utf-8"))
+_re_unicode_lowercase_y = re.compile(unicode(r"(?u)[ýÿ]", "utf-8"))
+_re_unicode_lowercase_c = re.compile(unicode(r"(?u)[çć]", "utf-8"))
+_re_unicode_lowercase_n = re.compile(unicode(r"(?u)[ñ]", "utf-8"))
+_re_unicode_uppercase_a = re.compile(unicode(r"(?u)[ÁÀÄÂÃÅ]", "utf-8"))
+_re_unicode_uppercase_ae = re.compile(unicode(r"(?u)[Æ]", "utf-8"))
+_re_unicode_uppercase_e = re.compile(unicode(r"(?u)[ÉÈËÊ]", "utf-8"))
+_re_unicode_uppercase_i = re.compile(unicode(r"(?u)[ÍÌÏÎ]", "utf-8"))
+_re_unicode_uppercase_o = re.compile(unicode(r"(?u)[ÓÒÖÔÕØ]", "utf-8"))
+_re_unicode_uppercase_u = re.compile(unicode(r"(?u)[ÚÙÜÛ]", "utf-8"))
+_re_unicode_uppercase_y = re.compile(unicode(r"(?u)[Ý]", "utf-8"))
+_re_unicode_uppercase_c = re.compile(unicode(r"(?u)[ÇĆ]", "utf-8"))
+_re_unicode_uppercase_n = re.compile(unicode(r"(?u)[Ñ]", "utf-8"))
+
+# latex
+_re_latex_lowercase_a = re.compile("\\\\[\"H'`~^vu=k]\{?a\}?")
+_re_latex_lowercase_ae = re.compile("\\\\ae\\{\\}?")
+_re_latex_lowercase_e = re.compile("\\\\[\"H'`~^vu=k]\\{?e\\}?")
+_re_latex_lowercase_i = re.compile("\\\\[\"H'`~^vu=k]\\{?i\\}?")
+_re_latex_lowercase_o = re.compile("\\\\[\"H'`~^vu=k]\\{?o\\}?")
+_re_latex_lowercase_u = re.compile("\\\\[\"H'`~^vu=k]\\{?u\\}?")
+_re_latex_lowercase_y = re.compile("\\\\[\"']\\{?y\\}?")
+_re_latex_lowercase_c = re.compile("\\\\['uc]\\{?c\\}?")
+_re_latex_lowercase_n = re.compile("\\\\[c'~^vu]\\{?n\\}?")
+_re_latex_uppercase_a = re.compile("\\\\[\"H'`~^vu=k]\\{?A\\}?")
+_re_latex_uppercase_ae = re.compile("\\\\AE\\{?\\}?")
+_re_latex_uppercase_e = re.compile("\\\\[\"H'`~^vu=k]\\{?E\\}?")
+_re_latex_uppercase_i = re.compile("\\\\[\"H'`~^vu=k]\\{?I\\}?")
+_re_latex_uppercase_o = re.compile("\\\\[\"H'`~^vu=k]\\{?O\\}?")
+_re_latex_uppercase_u = re.compile("\\\\[\"H'`~^vu=k]\\{?U\\}?")
+_re_latex_uppercase_y = re.compile("\\\\[\"']\\{?Y\\}?")
+_re_latex_uppercase_c = re.compile("\\\\['uc]\\{?C\\}?")
+_re_latex_uppercase_n = re.compile("\\\\[c'~^vu]\\{?N\\}?")
+
+def strip_accents(x):
+    """Strip accents in the input phrase X (assumed in UTF-8) by replacing
+    accented characters with their unaccented cousins (e.g. é by e).
+    Return such a stripped X."""
+    x = _re_latex_lowercase_a.sub("a", x)
+    x = _re_latex_lowercase_ae.sub("ae", x)
+    x = _re_latex_lowercase_e.sub("e", x)
+    x = _re_latex_lowercase_i.sub("i", x)
+    x = _re_latex_lowercase_o.sub("o", x)
+    x = _re_latex_lowercase_u.sub("u", x)
+    x = _re_latex_lowercase_y.sub("x", x)
+    x = _re_latex_lowercase_c.sub("c", x)
+    x = _re_latex_lowercase_n.sub("n", x)
+    x = _re_latex_uppercase_a.sub("A", x)
+    x = _re_latex_uppercase_ae.sub("AE", x)
+    x = _re_latex_uppercase_e.sub("E", x)
+    x = _re_latex_uppercase_i.sub("I", x)
+    x = _re_latex_uppercase_o.sub("O", x)
+    x = _re_latex_uppercase_u.sub("U", x)
+    x = _re_latex_uppercase_y.sub("Y", x)
+    x = _re_latex_uppercase_c.sub("C", x)
+    x = _re_latex_uppercase_n.sub("N", x)
+
+    # convert input into Unicode string:
+    try:
+        y = unicode(x, "utf-8")
+    except UnicodeDecodeError:
+        return x # something went wrong, probably the input wasn't UTF-8
+    # asciify Latin-1 lowercase characters:
+    y = _re_unicode_lowercase_a.sub("a", y)
+    y = _re_unicode_lowercase_ae.sub("ae", y)
+    y = _re_unicode_lowercase_e.sub("e", y)
+    y = _re_unicode_lowercase_i.sub("i", y)
+    y = _re_unicode_lowercase_o.sub("o", y)
+    y = _re_unicode_lowercase_u.sub("u", y)
+    y = _re_unicode_lowercase_y.sub("y", y)
+    y = _re_unicode_lowercase_c.sub("c", y)
+    y = _re_unicode_lowercase_n.sub("n", y)
+    # asciify Latin-1 uppercase characters:
+    y = _re_unicode_uppercase_a.sub("A", y)
+    y = _re_unicode_uppercase_ae.sub("AE", y)
+    y = _re_unicode_uppercase_e.sub("E", y)
+    y = _re_unicode_uppercase_i.sub("I", y)
+    y = _re_unicode_uppercase_o.sub("O", y)
+    y = _re_unicode_uppercase_u.sub("U", y)
+    y = _re_unicode_uppercase_y.sub("Y", y)
+    y = _re_unicode_uppercase_c.sub("C", y)
+    y = _re_unicode_uppercase_n.sub("N", y)
+    # return UTF-8 representation of the Unicode string:
+    return y.encode("utf-8")

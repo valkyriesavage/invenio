@@ -38,12 +38,31 @@ import urlparse
 import zlib
 import sys
 
+from MySQLdb import OperationalError
+
 if sys.hexversion < 0x2040000:
     # pylint: disable=W0622
     from sets import Set as set
     # pylint: enable=W0622
 
 ## import Invenio stuff:
+from invenio import webinterface_handler_config as apache
+from invenio.access_control_admin import acc_get_action_id
+from invenio.access_control_config import VIEWRESTRCOLL, \
+                                          CFG_ACC_GRANT_AUTHOR_RIGHTS_TO_EMAILS_IN_TAGS
+from invenio.access_control_engine import acc_authorize_action
+from invenio.bibformat import format_record, format_records, get_output_format_content_type, create_excel
+from invenio.bibformat_config import CFG_BIBFORMAT_USE_OLD_BIBFORMAT
+from invenio.bibindex_engine_stemmer import stem
+from invenio.bibindex_engine_tokenizer import wash_author_name, author_name_requires_phrase_search
+from invenio.bibrank_citation_grapher import create_citation_history_graph_and_box
+from invenio.bibrank_citation_searcher import get_cited_by_count, calculate_cited_by_list, \
+                                              calculate_co_cited_with_list, get_records_with_num_cites, \
+                                              get_self_cited_by, get_refersto_hitset, get_citedby_hitset
+from invenio.bibrank_downloads_grapher import create_download_history_graph_and_box
+from invenio.bibrank_downloads_similarity import register_page_view_event, calculate_reading_similarity_list
+from invenio.bibrank_record_sorter import get_bibrank_methods, rank_records, is_method_valid
+from invenio.bibrecord import create_record, record_get_field_instances
 from invenio.config import \
      CFG_CERN_SITE, \
      CFG_INSPIRE_SITE, \
@@ -70,129 +89,74 @@ from invenio.config import \
      CFG_ACCESS_CONTROL_LEVEL_ACCOUNTS, \
      CFG_BIBRANK_SHOW_CITATION_LINKS, \
      CFG_SOLR_URL
-from invenio.search_engine_config import InvenioWebSearchUnknownCollectionError, InvenioWebSearchWildcardLimitError
-from invenio.bibrecord import create_record, record_get_field_instances
-from invenio.bibrank_record_sorter import get_bibrank_methods, rank_records, is_method_valid
-from invenio.bibrank_downloads_similarity import register_page_view_event, calculate_reading_similarity_list
-from invenio.bibindex_engine_stemmer import stem
-from invenio.bibindex_engine_tokenizer import wash_author_name, author_name_requires_phrase_search
-from invenio.bibformat import format_record, format_records, get_output_format_content_type, create_excel
-from invenio.bibformat_config import CFG_BIBFORMAT_USE_OLD_BIBFORMAT
-from invenio.bibrank_downloads_grapher import create_download_history_graph_and_box
 from invenio.data_cacher import DataCacher
-from invenio.websearch_external_collections import print_external_results_overview, perform_external_collection_search
-from invenio.access_control_admin import acc_get_action_id
-from invenio.access_control_config import VIEWRESTRCOLL, \
-    CFG_ACC_GRANT_AUTHOR_RIGHTS_TO_EMAILS_IN_TAGS
-from invenio.websearchadminlib import get_detailed_page_tabs
-from invenio.intbitset import intbitset as HitSet
 from invenio.dbquery import DatabaseError, deserialize_via_marshal, InvenioDbQueryWildcardLimitError
-from invenio.access_control_engine import acc_authorize_action
-from invenio.errorlib import register_exception
-from invenio.textutils import encode_for_xml, wash_for_utf8
-
-import invenio.template
-webstyle_templates = invenio.template.load('webstyle')
-webcomment_templates = invenio.template.load('webcomment')
-
-from invenio.bibrank_citation_searcher import get_cited_by_count, calculate_cited_by_list, \
-    calculate_co_cited_with_list, get_records_with_num_cites, get_self_cited_by, \
-    get_refersto_hitset, get_citedby_hitset
-from invenio.bibrank_citation_grapher import create_citation_history_graph_and_box
-
 from invenio.dbquery import run_sql, run_sql_with_limit, \
                             get_table_update_time, Error
-from invenio.webuser import getUid, collect_user_info
-from invenio.webpage import pageheaderonly, pagefooteronly, create_error_box
+from invenio.errorlib import register_exception
+from invenio.intbitset import intbitset as HitSet
+from invenio.listutils import ziplist
 from invenio.messages import gettext_set_language
+from invenio.search_engine_config import InvenioWebSearchUnknownCollectionError, InvenioWebSearchWildcardLimitError
 from invenio.search_engine_query_parser import SearchQueryParenthesisedParser, \
-    SpiresToInvenioSyntaxConverter
-
-from invenio import webinterface_handler_config as apache
+                                               SpiresToInvenioSyntaxConverter
 from invenio.solrutils import solr_get_bitset
-
-
-try:
-    import invenio.template
-    websearch_templates = invenio.template.load('websearch')
-except:
-    pass
-
-from invenio.websearch_external_collections import calculate_hosted_collections_results, do_calculate_hosted_collections_results
+from invenio.textutils import encode_for_xml, wash_for_utf8, strip_accents
+from invenio.webpage import pageheaderonly, pagefooteronly, create_error_box
+from invenio.websearch_external_collections import calculate_hosted_collections_results, \
+                                                   do_calculate_hosted_collections_results
+from invenio.websearch_external_collections import print_external_results_overview, perform_external_collection_search
+from invenio.websearch_external_collections_config import CFG_EXTERNAL_COLLECTION_MAXRESULTS
 from invenio.websearch_external_collections_config import CFG_HOSTED_COLLECTION_TIMEOUT_ANTE_SEARCH
 from invenio.websearch_external_collections_config import CFG_HOSTED_COLLECTION_TIMEOUT_POST_SEARCH
-from invenio.websearch_external_collections_config import CFG_EXTERNAL_COLLECTION_MAXRESULTS
+from invenio.websearchadminlib import get_detailed_page_tabs
+from invenio.webuser import getUid, collect_user_info
+import invenio.template
 
-VIEWRESTRCOLL_ID = acc_get_action_id(VIEWRESTRCOLL)
-
-## global vars:
-cfg_nb_browse_seen_records = 100 # limit of the number of records to check when browsing certain collection
-cfg_nicely_ordered_collection_list = 0 # do we propose collection list nicely ordered or alphabetical?
+# load templates
+webcomment_templates = invenio.template.load('webcomment')
+websearch_templates = invenio.template.load('websearch')
+webstyle_templates = invenio.template.load('webstyle')
 
 ## precompile some often-used regexp for speed reasons:
-re_word = re.compile('[\s]')
-re_quotes = re.compile('[\'\"]')
-re_doublequote = re.compile('\"')
-re_equal = re.compile('\=')
-re_logical_and = re.compile('\sand\s', re.I)
-re_logical_or = re.compile('\sor\s', re.I)
-re_logical_not = re.compile('\snot\s', re.I)
-re_operators = re.compile(r'\s([\+\-\|])\s')
-re_pattern_wildcards_after_spaces = re.compile(r'(\s)[\*\%]+')
-re_pattern_single_quotes = re.compile("'(.*?)'")
-re_pattern_double_quotes = re.compile("\"(.*?)\"")
-re_pattern_regexp_quotes = re.compile("\/(.*?)\/")
-re_pattern_spaces_after_colon = re.compile(r'(:\s+)')
-re_pattern_short_words = re.compile(r'([\s\"]\w{1,3})[\*\%]+')
-re_pattern_space = re.compile("__SPACE__")
-re_pattern_today = re.compile("\$TODAY\$")
-re_pattern_parens = re.compile(r'\([^\)]+\s+[^\)]+\)')
-re_unicode_lowercase_a = re.compile(unicode(r"(?u)[áàäâãå]", "utf-8"))
-re_unicode_lowercase_ae = re.compile(unicode(r"(?u)[æ]", "utf-8"))
-re_unicode_lowercase_e = re.compile(unicode(r"(?u)[éèëê]", "utf-8"))
-re_unicode_lowercase_i = re.compile(unicode(r"(?u)[íìïî]", "utf-8"))
-re_unicode_lowercase_o = re.compile(unicode(r"(?u)[óòöôõø]", "utf-8"))
-re_unicode_lowercase_u = re.compile(unicode(r"(?u)[úùüû]", "utf-8"))
-re_unicode_lowercase_y = re.compile(unicode(r"(?u)[ýÿ]", "utf-8"))
-re_unicode_lowercase_c = re.compile(unicode(r"(?u)[çć]", "utf-8"))
-re_unicode_lowercase_n = re.compile(unicode(r"(?u)[ñ]", "utf-8"))
-re_unicode_uppercase_a = re.compile(unicode(r"(?u)[ÁÀÄÂÃÅ]", "utf-8"))
-re_unicode_uppercase_ae = re.compile(unicode(r"(?u)[Æ]", "utf-8"))
-re_unicode_uppercase_e = re.compile(unicode(r"(?u)[ÉÈËÊ]", "utf-8"))
-re_unicode_uppercase_i = re.compile(unicode(r"(?u)[ÍÌÏÎ]", "utf-8"))
-re_unicode_uppercase_o = re.compile(unicode(r"(?u)[ÓÒÖÔÕØ]", "utf-8"))
-re_unicode_uppercase_u = re.compile(unicode(r"(?u)[ÚÙÜÛ]", "utf-8"))
-re_unicode_uppercase_y = re.compile(unicode(r"(?u)[Ý]", "utf-8"))
-re_unicode_uppercase_c = re.compile(unicode(r"(?u)[ÇĆ]", "utf-8"))
-re_unicode_uppercase_n = re.compile(unicode(r"(?u)[Ñ]", "utf-8"))
-re_latex_lowercase_a = re.compile("\\\\[\"H'`~^vu=k]\{?a\}?")
-re_latex_lowercase_ae = re.compile("\\\\ae\\{\\}?")
-re_latex_lowercase_e = re.compile("\\\\[\"H'`~^vu=k]\\{?e\\}?")
-re_latex_lowercase_i = re.compile("\\\\[\"H'`~^vu=k]\\{?i\\}?")
-re_latex_lowercase_o = re.compile("\\\\[\"H'`~^vu=k]\\{?o\\}?")
-re_latex_lowercase_u = re.compile("\\\\[\"H'`~^vu=k]\\{?u\\}?")
-re_latex_lowercase_y = re.compile("\\\\[\"']\\{?y\\}?")
-re_latex_lowercase_c = re.compile("\\\\['uc]\\{?c\\}?")
-re_latex_lowercase_n = re.compile("\\\\[c'~^vu]\\{?n\\}?")
-re_latex_uppercase_a = re.compile("\\\\[\"H'`~^vu=k]\\{?A\\}?")
-re_latex_uppercase_ae = re.compile("\\\\AE\\{?\\}?")
-re_latex_uppercase_e = re.compile("\\\\[\"H'`~^vu=k]\\{?E\\}?")
-re_latex_uppercase_i = re.compile("\\\\[\"H'`~^vu=k]\\{?I\\}?")
-re_latex_uppercase_o = re.compile("\\\\[\"H'`~^vu=k]\\{?O\\}?")
-re_latex_uppercase_u = re.compile("\\\\[\"H'`~^vu=k]\\{?U\\}?")
-re_latex_uppercase_y = re.compile("\\\\[\"']\\{?Y\\}?")
-re_latex_uppercase_c = re.compile("\\\\['uc]\\{?C\\}?")
-re_latex_uppercase_n = re.compile("\\\\[c'~^vu]\\{?N\\}?")
+# syntax
+_re_word = re.compile('[\s]')
+_re_pattern_short_words = re.compile(r'([\s\"]\w{1,3})[\*\%]+')
+_re_quotes = re.compile('[\'\"]')
+_re_doublequote = re.compile('\"')
+_re_pattern_single_quotes = re.compile("'(.*?)'")
+_re_pattern_double_quotes = re.compile("\"(.*?)\"")
+_re_pattern_regexp_quotes = re.compile("\/(.*?)\/")
+_re_pattern_parens = re.compile(r'\([^\)]+\s+[^\)]+\)')
+_re_equal = re.compile('\=')
+_re_pattern_space = re.compile("__SPACE__")
+_re_pattern_spaces_after_colon = re.compile(r'(:\s+)')
+_re_pattern_wildcards_after_spaces = re.compile(r'(\s)[\*\%]+')
+
+# invenio keywords
+_re_pattern_today = re.compile("\$TODAY\$")
+
+# logic
+_re_logical_and = re.compile('\sand\s', re.I)
+_re_logical_or = re.compile('\sor\s', re.I)
+_re_logical_not = re.compile('\snot\s', re.I)
+_re_operators = re.compile(r'\s([\+\-\|])\s')
+
+# URL matching
+_re_collection_url = re.compile('/collection/(.+)')
 
 class RestrictedCollectionDataCacher(DataCacher):
+
     def __init__(self):
+        VIEWRESTRCOLL_ID = acc_get_action_id(VIEWRESTRCOLL)
+    
         def cache_filler():
             ret = []
             try:
                 res = run_sql("""SELECT DISTINCT ar.value
                     FROM accROLE_accACTION_accARGUMENT raa JOIN accARGUMENT ar ON raa.id_accARGUMENT = ar.id
                     WHERE ar.keyword = 'collection' AND raa.id_accACTION = %s""", (VIEWRESTRCOLL_ID,))
-            except Exception:
+            except OperationalError:
                 # database problems, return empty cache
                 return []
             for coll in res:
@@ -211,26 +175,8 @@ def collection_restricted_p(collection, recreate_cache_if_needed=True):
 
 try:
     restricted_collection_cache.is_ok_p
-except Exception:
+except NameError:
     restricted_collection_cache = RestrictedCollectionDataCacher()
-
-
-def ziplist(*lists):
-    """Just like zip(), but returns lists of lists instead of lists of tuples
-
-    Example:
-    zip([f1, f2, f3], [p1, p2, p3], [op1, op2, '']) =>
-       [(f1, p1, op1), (f2, p2, op2), (f3, p3, '')]
-    ziplist([f1, f2, f3], [p1, p2, p3], [op1, op2, '']) =>
-       [[f1, p1, op1], [f2, p2, op2], [f3, p3, '']]
-
-    FIXME: This is handy to have, and should live somewhere else, like
-    miscutil.really_useful_functions or something.
-    """
-    def l(*items):
-        return list(items)
-    return map(l, *lists)
-
 
 def get_permitted_restricted_collections(user_info, recreate_cache_if_needed=True):
     """Return a list of collection that are restricted but for which the user
@@ -351,7 +297,7 @@ class IndexStemmingDataCacher(DataCacher):
 
 try:
     index_stemming_cache.is_ok_p
-except Exception:
+except NameError:
     index_stemming_cache = IndexStemmingDataCacher()
 
 def get_index_stemming_language(index_id, recreate_cache_if_needed=True):
@@ -370,7 +316,7 @@ class CollectionRecListDataCacher(DataCacher):
             ret = {}
             try:
                 res = run_sql("SELECT name,reclist FROM collection")
-            except Exception:
+            except OperationalError:
                 # database problems, return empty cache
                 return {}
             for name, reclist in res:
@@ -383,9 +329,8 @@ class CollectionRecListDataCacher(DataCacher):
         DataCacher.__init__(self, cache_filler, timestamp_verifier)
 
 try:
-    if not collection_reclist_cache.is_ok_p:
-        raise Exception
-except Exception:
+    collection_reclist_cache.is_ok_p
+except NameError:
     collection_reclist_cache = CollectionRecListDataCacher()
 
 def get_collection_reclist(coll, recreate_cache_if_needed=True):
@@ -400,7 +345,7 @@ def get_collection_reclist(coll, recreate_cache_if_needed=True):
         if res:
             try:
                 set = HitSet(res[0][1])
-            except:
+            except ValueError:
                 pass
         collection_reclist_cache.cache[coll] = set
     # finally, return reclist:
@@ -421,9 +366,8 @@ class SearchResultsCache(DataCacher):
         DataCacher.__init__(self, cache_filler, timestamp_verifier)
 
 try:
-    if not search_results_cache.is_ok_p:
-        raise Exception
-except Exception:
+    search_results_cache.is_ok_p
+except NameError:
     search_results_cache = SearchResultsCache()
 
 class CollectionI18nNameDataCacher(DataCacher):
@@ -436,7 +380,7 @@ class CollectionI18nNameDataCacher(DataCacher):
             ret = {}
             try:
                 res = run_sql("SELECT c.name,cn.ln,cn.value FROM collectionname AS cn, collection AS c WHERE cn.id_collection=c.id AND cn.type='ln'") # ln=long name
-            except Exception:
+            except OperationalError:
                 # database problems
                 return {}
             for c, ln, i18nname in res:
@@ -452,9 +396,8 @@ class CollectionI18nNameDataCacher(DataCacher):
         DataCacher.__init__(self, cache_filler, timestamp_verifier)
 
 try:
-    if not collection_i18nname_cache.is_ok_p:
-        raise Exception
-except Exception:
+    collection_i18nname_cache.is_ok_p
+except NameError:
     collection_i18nname_cache = CollectionI18nNameDataCacher()
 
 def get_coll_i18nname(c, ln=CFG_SITE_LANG, verify_cache_timestamp=True):
@@ -493,7 +436,7 @@ class FieldI18nNameDataCacher(DataCacher):
             ret = {}
             try:
                 res = run_sql("SELECT f.name,fn.ln,fn.value FROM fieldname AS fn, field AS f WHERE fn.id_field=f.id AND fn.type='ln'") # ln=long name
-            except Exception:
+            except OperationalError:
                 # database problems, return empty cache
                 return {}
             for f, ln, i18nname in res:
@@ -509,9 +452,8 @@ class FieldI18nNameDataCacher(DataCacher):
         DataCacher.__init__(self, cache_filler, timestamp_verifier)
 
 try:
-    if not field_i18nname_cache.is_ok_p:
-        raise Exception
-except Exception:
+    field_i18nname_cache.is_ok_p
+except NameError:
     field_i18nname_cache = FieldI18nNameDataCacher()
 
 def get_field_i18nname(f, ln=CFG_SITE_LANG, verify_cache_timestamp=True):
@@ -551,26 +493,6 @@ def get_alphabetically_ordered_collection_list(level=0, ln=CFG_SITE_LANG):
             c_printable = " " + level * '-' + " " + c_printable
         out.append([c_name, c_printable])
     return out
-
-def get_nicely_ordered_collection_list(collid=1, level=0, ln=CFG_SITE_LANG):
-    """Returns nicely ordered (score respected) list of collections, more exactly list of tuples
-       (collection name, printable collection name).
-       Suitable for create_search_box()."""
-    colls_nicely_ordered = []
-    res = run_sql("""SELECT c.name,cc.id_son FROM collection_collection AS cc, collection AS c
-                     WHERE c.id=cc.id_son AND cc.id_dad=%s ORDER BY score DESC""", (collid, ))
-    for c, cid in res:
-        # make a nice printable name (e.g. truncate c_printable for
-        # long collection names in given language):
-        c_printable_fullname = get_coll_i18nname(c, ln, False)
-        c_printable = wash_index_term(c_printable_fullname, 30, False)
-        if c_printable != c_printable_fullname:
-            c_printable = c_printable + "..."
-        if level:
-            c_printable = " " + level * '-' + " " + c_printable
-        colls_nicely_ordered.append([c, c_printable])
-        colls_nicely_ordered  = colls_nicely_ordered + get_nicely_ordered_collection_list(cid, level+1, ln=ln)
-    return colls_nicely_ordered
 
 def get_index_id_from_field(field):
     """
@@ -683,19 +605,19 @@ def create_basic_search_units(req, p, f, m=None, of='hb'):
             ## B3 - doing WRD search, but maybe ACC too
             # search units are separated by spaces unless the space is within single or double quotes
             # so, let us replace temporarily any space within quotes by '__SPACE__'
-            p = re_pattern_single_quotes.sub(lambda x: "'"+string.replace(x.group(1), ' ', '__SPACE__')+"'", p)
-            p = re_pattern_double_quotes.sub(lambda x: "\""+string.replace(x.group(1), ' ', '__SPACE__')+"\"", p)
-            p = re_pattern_regexp_quotes.sub(lambda x: "/"+string.replace(x.group(1), ' ', '__SPACE__')+"/", p)
+            p = _re_pattern_single_quotes.sub(lambda x: "'"+string.replace(x.group(1), ' ', '__SPACE__')+"'", p)
+            p = _re_pattern_double_quotes.sub(lambda x: "\""+string.replace(x.group(1), ' ', '__SPACE__')+"\"", p)
+            p = _re_pattern_regexp_quotes.sub(lambda x: "/"+string.replace(x.group(1), ' ', '__SPACE__')+"/", p)
             # and spaces after colon as well:
-            p = re_pattern_spaces_after_colon.sub(lambda x: string.replace(x.group(1), ' ', '__SPACE__'), p)
+            p = _re_pattern_spaces_after_colon.sub(lambda x: string.replace(x.group(1), ' ', '__SPACE__'), p)
             # wash argument:
-            p = re_equal.sub(":", p)
-            p = re_logical_and.sub(" ", p)
-            p = re_logical_or.sub(" |", p)
-            p = re_logical_not.sub(" -", p)
-            p = re_operators.sub(r' \1', p)
+            p = _re_equal.sub(":", p)
+            p = _re_logical_and.sub(" ", p)
+            p = _re_logical_or.sub(" |", p)
+            p = _re_logical_not.sub(" -", p)
+            p = _re_operators.sub(r' \1', p)
             for pi in string.split(p): # iterate through separated units (or items, as "pi" stands for "p item")
-                pi = re_pattern_space.sub(" ", pi) # replace back '__SPACE__' by ' '
+                pi = _re_pattern_space.sub(" ", pi) # replace back '__SPACE__' by ' '
                 # firstly, determine set operator
                 if pi[0] == '+' or pi[0] == '-' or pi[0] == '|':
                     oi = pi[0]
@@ -719,7 +641,7 @@ def create_basic_search_units(req, p, f, m=None, of='hb'):
                 fi = wash_field(fi)
                 # wash 'pi' argument:
                 pi = pi.strip() # strip eventual spaces
-                if re_quotes.match(pi):
+                if _re_quotes.match(pi):
                     # B3a - quotes are found => do ACC search (phrase search)
                     if pi[0] == '"' and pi[-1] == '"':
                         pi = string.replace(pi, '"', '') # remove quote signs
@@ -757,7 +679,7 @@ def create_basic_search_units(req, p, f, m=None, of='hb'):
                     if of.startswith("h"):
                         print_warning(req, "Ignoring empty <em>%s</em> search term." % fi, "Warning")
                 del opfts[i]
-        except:
+        except IndexError:
             pass
 
     ## replace old logical field names if applicable:
@@ -941,10 +863,9 @@ def create_search_box(cc, colls, p, f, rg, sf, so, sp, rm, of, ot, aas,
     cc_colID = get_colID(cc)
 
     colls_nicely_ordered = []
-    if cfg_nicely_ordered_collection_list:
-        colls_nicely_ordered = get_nicely_ordered_collection_list(ln=ln)
-    else:
-        colls_nicely_ordered = get_alphabetically_ordered_collection_list(ln=ln)
+    # 23.03.11 valkyrie - removed if branch and global var here because it was not truly a config var
+    # and we were always executing this branch, anyway
+    colls_nicely_ordered = get_alphabetically_ordered_collection_list(ln=ln)
 
     colls_nice = []
     for (cx, cx_printable) in colls_nicely_ordered:
@@ -1389,57 +1310,6 @@ def wash_colls(cc, c, split_colls=0, verbose=0):
 
     return (cc, colls_out_for_display, colls_out, hosted_colls_out, debug)
 
-def strip_accents(x):
-    """Strip accents in the input phrase X (assumed in UTF-8) by replacing
-    accented characters with their unaccented cousins (e.g. é by e).
-    Return such a stripped X."""
-    x = re_latex_lowercase_a.sub("a", x)
-    x = re_latex_lowercase_ae.sub("ae", x)
-    x = re_latex_lowercase_e.sub("e", x)
-    x = re_latex_lowercase_i.sub("i", x)
-    x = re_latex_lowercase_o.sub("o", x)
-    x = re_latex_lowercase_u.sub("u", x)
-    x = re_latex_lowercase_y.sub("x", x)
-    x = re_latex_lowercase_c.sub("c", x)
-    x = re_latex_lowercase_n.sub("n", x)
-    x = re_latex_uppercase_a.sub("A", x)
-    x = re_latex_uppercase_ae.sub("AE", x)
-    x = re_latex_uppercase_e.sub("E", x)
-    x = re_latex_uppercase_i.sub("I", x)
-    x = re_latex_uppercase_o.sub("O", x)
-    x = re_latex_uppercase_u.sub("U", x)
-    x = re_latex_uppercase_y.sub("Y", x)
-    x = re_latex_uppercase_c.sub("C", x)
-    x = re_latex_uppercase_n.sub("N", x)
-
-    # convert input into Unicode string:
-    try:
-        y = unicode(x, "utf-8")
-    except:
-        return x # something went wrong, probably the input wasn't UTF-8
-    # asciify Latin-1 lowercase characters:
-    y = re_unicode_lowercase_a.sub("a", y)
-    y = re_unicode_lowercase_ae.sub("ae", y)
-    y = re_unicode_lowercase_e.sub("e", y)
-    y = re_unicode_lowercase_i.sub("i", y)
-    y = re_unicode_lowercase_o.sub("o", y)
-    y = re_unicode_lowercase_u.sub("u", y)
-    y = re_unicode_lowercase_y.sub("y", y)
-    y = re_unicode_lowercase_c.sub("c", y)
-    y = re_unicode_lowercase_n.sub("n", y)
-    # asciify Latin-1 uppercase characters:
-    y = re_unicode_uppercase_a.sub("A", y)
-    y = re_unicode_uppercase_ae.sub("AE", y)
-    y = re_unicode_uppercase_e.sub("E", y)
-    y = re_unicode_uppercase_i.sub("I", y)
-    y = re_unicode_uppercase_o.sub("O", y)
-    y = re_unicode_uppercase_u.sub("U", y)
-    y = re_unicode_uppercase_y.sub("Y", y)
-    y = re_unicode_uppercase_c.sub("C", y)
-    y = re_unicode_uppercase_n.sub("N", y)
-    # return UTF-8 representation of the Unicode string:
-    return y.encode("utf-8")
-
 def wash_index_term(term, max_char_length=50, lower_term=True):
     """
     Return washed form of the index term TERM that would be suitable
@@ -1503,17 +1373,17 @@ def wash_pattern(p):
     # add leading/trailing whitespace for the two following wildcard-sanity checking regexps:
     p = " " + p + " "
     # replace spaces within quotes by __SPACE__ temporarily:
-    p = re_pattern_single_quotes.sub(lambda x: "'"+string.replace(x.group(1), ' ', '__SPACE__')+"'", p)
-    p = re_pattern_double_quotes.sub(lambda x: "\""+string.replace(x.group(1), ' ', '__SPACE__')+"\"", p)
-    p = re_pattern_regexp_quotes.sub(lambda x: "/"+string.replace(x.group(1), ' ', '__SPACE__')+"/", p)
+    p = _re_pattern_single_quotes.sub(lambda x: "'"+string.replace(x.group(1), ' ', '__SPACE__')+"'", p)
+    p = _re_pattern_double_quotes.sub(lambda x: "\""+string.replace(x.group(1), ' ', '__SPACE__')+"\"", p)
+    p = _re_pattern_regexp_quotes.sub(lambda x: "/"+string.replace(x.group(1), ' ', '__SPACE__')+"/", p)
     # get rid of unquoted wildcards after spaces:
-    p = re_pattern_wildcards_after_spaces.sub("\\1", p)
+    p = _re_pattern_wildcards_after_spaces.sub("\\1", p)
     # get rid of extremely short words (1-3 letters with wildcards):
-    #p = re_pattern_short_words.sub("\\1", p)
+    #p = _re_pattern_short_words.sub("\\1", p)
     # replace back __SPACE__ by spaces:
-    p = re_pattern_space.sub(" ", p)
+    p = _re_pattern_space.sub(" ", p)
     # replace special terms:
-    p = re_pattern_today.sub(time.strftime("%Y-%m-%d", time.localtime()), p)
+    p = _re_pattern_today.sub(time.strftime("%Y-%m-%d", time.localtime()), p)
     # remove unnecessary whitespace:
     p = string.strip(p)
     # remove potentially wrong UTF-8 characters:
@@ -1602,7 +1472,7 @@ def is_hosted_collection(coll):
     res = run_sql("SELECT dbquery FROM collection WHERE name=%s", (coll, ))
     try:
         return res[0][0].startswith("hostedcollection:")
-    except:
+    except AttributeError:
         return False
 
 def get_colID(c):
@@ -1705,7 +1575,7 @@ def browse_pattern(req, colls, p, f, rg, ln=CFG_SITE_LANG):
             try:
                 p = p[:-1]
                 browsed_phrases = get_nearest_terms_in_bibxxx(p, f, (rg+1)/2+1, (rg-1)/2+1)
-            except:
+            except IndexError:
                 # probably there are no hits at all:
                 req.write(_("No values found."))
                 return
@@ -1971,7 +1841,7 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
 
     # sanity check: do not call parenthesised parser for search terms
     # like U(1):
-    if not re_pattern_parens.search(p):
+    if not _re_pattern_parens.search(p):
         return search_pattern(req, p, f, m, ap, of, verbose, ln, display_nearest_terms_box=display_nearest_terms_box, wl=wl)
 
     # Try searching with parentheses
@@ -2101,8 +1971,8 @@ def search_unit_in_bibwords(word, f, m=None, decompress=zlib.decompress, wl=0):
     word = string.replace(word, '*', '%') # we now use '*' as the truncation character
     words = string.split(word, "->", 1) # check for span query
     if len(words) == 2:
-        word0 = re_word.sub('', words[0])
-        word1 = re_word.sub('', words[1])
+        word0 = _re_word.sub('', words[0])
+        word1 = _re_word.sub('', words[1])
         if stemming_language:
             word0 = lower_index_term(word0)
             word1 = lower_index_term(word1)
@@ -2118,7 +1988,7 @@ def search_unit_in_bibwords(word, f, m=None, decompress=zlib.decompress, wl=0):
         if f == 'journal':
             pass # FIXME: quick hack for the journal index
         else:
-            word = re_word.sub('', word)
+            word = _re_word.sub('', word)
         if stemming_language:
             word = lower_index_term(word)
             word = stem(word, stemming_language)
@@ -2742,7 +2612,7 @@ def get_nearest_terms_in_bibxxx(p, f, n_below, n_above):
     # find position of self:
     try:
         idx_p = phrases_out.index(p)
-    except:
+    except ValueError:
         idx_p = len(phrases_out)/2
     # return n_above and n_below:
     return phrases_out[max(0, idx_p-n_above):idx_p+n_below]
@@ -2893,7 +2763,6 @@ def guess_primary_collection_of_a_record(recID):
                     break
     return out
 
-_re_collection_url = re.compile('/collection/(.+)')
 def guess_collection_of_a_record(recID, referer=None, recreate_cache_if_needed=True):
     """Return collection name a record recid belongs to, by first testing
        the referer URL if provided and otherwise returning the
@@ -2992,7 +2861,7 @@ def get_fieldvalues(recIDs, tag, repetitive_values=True):
     out = []
     try:
         recIDs = int(recIDs)
-    except:
+    except TypeError:
         pass
     if isinstance(recIDs, (int, long)):
         recIDs =[recIDs,]
@@ -3858,7 +3727,7 @@ def get_record(recid):
         if value:
             try:
                 return deserialize_via_marshal(value[0][0])
-            except:
+            except (EOFError, ValueError, TypeError):
                 ### In case of corruption, let's rebuild it!
                 pass
     return create_record(print_record(recid, 'xm'))[0]
@@ -4263,7 +4132,7 @@ def log_query(hostname, query_args, uid=-1):
         res = run_sql("SELECT id FROM query WHERE urlargs=%s", (query_args,), 1)
         try:
             id_query = res[0][0]
-        except:
+        except IndexError:
             id_query = run_sql("INSERT INTO query (type, urlargs) VALUES ('r', %s)", (query_args,))
         if id_query:
             run_sql("INSERT INTO user_query (id_user, id_query, hostname, date) VALUES (%s, %s, %s, %s)",
@@ -4285,7 +4154,7 @@ def log_query_info(action, p, f, colls, nb_records_found_total=-1):
         log.write("%d" % nb_records_found_total)
         log.write("\n")
         log.close()
-    except:
+    except IOError:
         pass
     return
 
@@ -4552,7 +4421,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
     # deduce user id (if applicable):
     try:
         uid = getUid(req)
-    except:
+    except AttributeError:
         uid = 0
     ## 0 - start output
     if recid >= 0: # recid can be 0 if deduced from sysno and if such sysno does not exist
@@ -4602,6 +4471,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             else:
                 browse_pattern(req, colls_to_search, p, f, rg, ln)
         except:
+            # TODO someone who understands browse_pattern, please catch appropriate errors!
             register_exception(req=req, alert_admin=True)
             if of.startswith("h"):
                 req.write(create_error_box(req, verbose=verbose, ln=ln))
@@ -4813,6 +4683,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                         if of.startswith("h"):
                             print_warning(req, "Invalid set operation %s." % cgi.escape(op2), "Error")
             except:
+                # TODO someone who understands browse_pattern, please catch appropriate errors!
                 register_exception(req=req, alert_admin=True)
                 if of.startswith("h"):
                     req.write(create_error_box(req, verbose=verbose, ln=ln))
@@ -4839,6 +4710,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                     if not only_hosted_colls_actual_or_potential_results_p:
                         results_in_any_collection = search_pattern_parenthesised(req, p, f, ap=ap, of=of, verbose=verbose, ln=ln, display_nearest_terms_box=not hosted_colls_actual_or_potential_results_p, wl=wl)
                 except:
+                    # TODO someone who understands browse_pattern, please catch appropriate errors!
                     register_exception(req=req, alert_admin=True)
                     if of.startswith("h"):
                         req.write(create_error_box(req, verbose=verbose, ln=ln))
@@ -4872,6 +4744,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
             else:
                 results_final = {}
         except:
+            # TODO someone who understands browse_pattern, please catch appropriate errors!
             register_exception(req=req, alert_admin=True)
             if of.startswith("h"):
                 req.write(create_error_box(req, verbose=verbose, ln=ln))
@@ -4900,6 +4773,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                                                                         "discarding this condition..."),
                                                               of=of)
             except:
+                # TODO someone who understands browse_pattern, please catch appropriate errors!
                 register_exception(req=req, alert_admin=True)
                 if of.startswith("h"):
                     req.write(create_error_box(req, verbose=verbose, ln=ln))
@@ -4927,6 +4801,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                                                                        "discarding this condition..."),
                                                               of=of)
             except:
+                # TODO someone who understands browse_pattern, please catch appropriate errors!
                 register_exception(req=req, alert_admin=True)
                 if of.startswith("h"):
                     req.write(create_error_box(req, verbose=verbose, ln=ln))
@@ -5172,6 +5047,7 @@ def perform_request_search(req=None, cc=CFG_SITE_NAME, c=None, p="", f="", rg=CF
                         req.write(websearch_templates.tmpl_alert_rss_teaser_box_for_query(id_query, \
                                              ln=ln, display_email_alert_part=display_email_alert_part))
             except:
+                # TODO someone who understands browse_pattern, please catch appropriate errors!
                 # do not log query if req is None (used by CLI interface)
                 pass
             log_query_info("ss", p, f, colls_to_search, results_final_nb_total)
@@ -5261,11 +5137,11 @@ def perform_request_log(req, date=""):
         i = 0
         for line in lines:
             try:
-                datetime, dummy_aas, p, f, c, nbhits = string.split(line,"#")
+                datetime, dummy_aas, p, f, c, nbhits = line.split("#")
                 i += 1
                 req.write("<tr><td align=\"right\">#%d</td><td>%s:%s:%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" \
                           % (i, datetime[8:10], datetime[10:12], datetime[12:], p, f, c, nbhits))
-            except:
+            except (AttributeError, ValueError):
                 pass # ignore eventual wrong log lines
         req.write("</table>")
     else: # case B: display summary stats per day
@@ -5362,43 +5238,3 @@ def get_most_popular_field_values(recids, tags, exclude_values=None, count_repet
             tmpdisplv = val
         out += (tmpdisplv, valuefreqdict[val]),
     return out
-
-def profile(p="", f="", c=CFG_SITE_NAME):
-    """Profile search time."""
-    import profile
-    import pstats
-    profile.run("perform_request_search(p='%s',f='%s', c='%s')" % (p, f, c), "perform_request_search_profile")
-    p = pstats.Stats("perform_request_search_profile")
-    p.strip_dirs().sort_stats("cumulative").print_stats()
-    return 0
-
-## test cases:
-#print wash_colls(CFG_SITE_NAME,"Library Catalogue", 0)
-#print wash_colls("Periodicals & Progress Reports",["Periodicals","Progress Reports"], 0)
-#print wash_field("wau")
-#print print_record(20,"tm","001,245")
-#print create_opft_search_units(None, "PHE-87-13","reportnumber")
-#print ":"+wash_pattern("* and % doo * %")+":\n"
-#print ":"+wash_pattern("*")+":\n"
-#print ":"+wash_pattern("ellis* ell* e*%")+":\n"
-#print run_sql("SELECT name,dbquery from collection")
-#print get_index_id("author")
-#print get_coll_ancestors("Theses")
-#print get_coll_sons("Articles & Preprints")
-#print get_coll_real_descendants("Articles & Preprints")
-#print get_collection_reclist("Theses")
-#print log(sys.stdin)
-#print search_unit_in_bibrec('2002-12-01','2002-12-12')
-#print get_nearest_terms_in_bibxxx("ellis", "author", 5, 5)
-#print call_bibformat(68, "HB_FLY")
-#print get_fieldvalues(10, "980__a")
-#print get_fieldvalues_alephseq_like(10,"001___")
-#print get_fieldvalues_alephseq_like(10,"980__a")
-#print get_fieldvalues_alephseq_like(10,"foo")
-#print get_fieldvalues_alephseq_like(10,"-1")
-#print get_fieldvalues_alephseq_like(10,"99")
-#print get_fieldvalues_alephseq_like(10,["001", "980"])
-
-## profiling:
-#profile("of the this")
-#print perform_request_search(p="ellis")
