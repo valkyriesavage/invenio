@@ -570,12 +570,15 @@ class SpiresToInvenioSyntaxConverter:
         """Compiles some of the regular expressions that are used in the class
         for higher performance."""
 
+        # regular expression that matches find and family at the beginning of a search
+        self._re_find_et_al_match = re.compile('^find |^fin |^f ')
+
         # regular expression that matches the contents in single and double quotes
         # taking in mind if they are escaped.
         self._re_quotes_match = re.compile('[^\\\\](".*?[^\\\\]")|[^\\\\](\'.*?[^\\\\]\')')
 
         # match cases where a keyword distributes across a conjunction
-        self._re_distribute_keywords = re.compile(r'\b(?P<keyword>\S*:)(?P<content>.+?)\s*(?P<combination>and not | and | or | not )\s*(?P<last_content>[^:]*?)(?= and not | and | or | not |$)', re.IGNORECASE)
+        self._re_distribute_keywords = re.compile(r'(\b|^)(?P<keyword>\S*:)(?P<content>.+?)\s*(?P<combination>and not | and | or | not )\s*(?P<last_content>[^:]*?)(?= and not | and | or | not |$)', re.IGNORECASE)
 
         # massaging SPIRES quirks
         self._re_pattern_IRN_search = re.compile(r'970__a:(?P<irn>\d+)')
@@ -592,10 +595,10 @@ class SpiresToInvenioSyntaxConverter:
 
         # match search term, its content (words that are searched) and
         # the operator preceding the term.
-        self._re_search_term_pattern_match = re.compile(r'\b(?P<combine_operator>find|and|or|not)\s+(?P<search_term>\S+:)(?P<search_content>.+?)(?= and not | and | or | not |$)', re.IGNORECASE)
+        self._re_search_term_pattern_match = re.compile(r'\b(?P<combine_operator>and\s|or\s|not\s|^)\s*(?P<search_term>\S+:)(?P<search_content>.+?)(?= and not | and | or | not |$)', re.IGNORECASE)
 
         # match journal searches with a comma at end and no keyword after
-        self._re_search_term_is_journal = re.compile(r'\b(?P<combine_operator>find|and|or|not)\s+(?P<search_term>journal|j):(?P<search_content>.+?)(?= and not | and | or | not |$)', re.IGNORECASE)
+        self._re_search_term_is_journal = re.compile(r'\b(?P<combine_operator>and\s|or\s|not\s|^)\s*(?P<search_term>journal|j):(?P<search_content>.+?)(?= and not | and | or | not |$)', re.IGNORECASE)
 
         # regular expression matching date after pattern
         self._re_date_after_match = re.compile(r'\b(?P<searchop>d|date|dupd|dadd|da|date-added|du|date-updated)\b\s*(after|>)\s*(?P<search_content>.+?)(?= and not | and | or | not |$)', re.IGNORECASE)
@@ -606,24 +609,11 @@ class SpiresToInvenioSyntaxConverter:
         # match date searches which have been keyword-substituted
         self._re_keysubbed_date_expr = re.compile(r'\b(?P<term>(' + self._DATE_ADDED_FIELD + ')|(' + self._DATE_UPDATED_FIELD + ')|(' + self._DATE_FIELD + '))(?P<content>.+?)(?= and not | and | or | not |$)', re.IGNORECASE)
 
-        # for finding (and changing) a variety of different SPIRES search keywords
-        self._re_spires_find_keyword = re.compile('^(?P<find>f|fin|find)\s+(?P<query>.*)$', re.IGNORECASE)
-
         # patterns for subbing out spaces within quotes temporarily
         self._re_pattern_single_quotes = re.compile("'(.*?)'")
         self._re_pattern_double_quotes = re.compile("\"(.*?)\"")
         self._re_pattern_regexp_quotes = re.compile("\/(.*?)\/")
         self._re_pattern_space = re.compile("__SPACE__")
-
-    def is_applicable(self, query):
-        """Is this converter applicable to this query?
-
-        Returns True IFF the query starts with SPIRES' 'find' keyword or some
-        acceptable variation thereof."""
-        if self._re_spires_find_keyword.match(query.lower()):
-            return True
-        else:
-            return False
 
     def convert_query(self, query):
         """Convert SPIRES syntax queries to Invenio syntax.
@@ -645,6 +635,7 @@ class SpiresToInvenioSyntaxConverter:
 
             # call to _replace_spires_keywords_with_invenio_keywords should be at the
             # beginning because the next methods use the result of the replacement
+            query = self._standardize_already_invenio_keywords(query)
             query = self._replace_spires_keywords_with_invenio_keywords(query)
             query = self._remove_spaces_in_comma_separated_journal(query)
             query = self._distribute_keywords_across_combinations(query)
@@ -947,7 +938,21 @@ class SpiresToInvenioSyntaxConverter:
             result += re.sub(',\s+', ',', match.group('search_content'))
             current_position = match.end()
         result += query[current_position : ]
-        return result
+        return result.strip()
+
+    def _standardize_already_invenio_keywords(self, query):
+        """Replaces invenio keywords kw with "and kw" in order to
+           parse them correctly further down the line."""
+
+        unique_invenio_keywords = set(self._SPIRES_TO_INVENIO_KEYWORDS_MATCHINGS.values())
+        unique_invenio_keywords.remove('') # for the ones that don't have invenio equivalents
+
+        for invenio_keyword in unique_invenio_keywords:
+            query = re.sub("(?<!^)(?<!... \+|... -| and |. or | not |....:)"+invenio_keyword, "and "+invenio_keyword, query)
+            query = re.sub("\+"+invenio_keyword, "and "+invenio_keyword, query)
+            query = re.sub("-"+invenio_keyword, "and not "+invenio_keyword, query)
+
+        return query
 
     def _replace_spires_keywords_with_invenio_keywords(self, query):
         """Replaces SPIRES keywords that have directly
@@ -989,8 +994,7 @@ class SpiresToInvenioSyntaxConverter:
         corresponding Invenio keywords"""
 
         for spires_keyword, invenio_keyword in self._SPIRES_TO_INVENIO_KEYWORDS_MATCHINGS.iteritems():
-            query = self._replace_keyword(query, spires_keyword, \
-                                          invenio_keyword)
+            query = self._replace_keyword(query, spires_keyword, invenio_keyword)
 
         return query
 
@@ -998,7 +1002,7 @@ class SpiresToInvenioSyntaxConverter:
         """Replaces old keyword in the query with a new keyword"""
         # perform case insensitive replacement with regular expression
 
-        regex_string = r'\b(?P<operator>(find|and|or|not)\b[\s\(]*)' + \
+        regex_string = r'(?P<operator>(\band|\bor|\bnot|^)\b[\s\(]*)' + \
                        old_keyword + r'(?P<end>[\s\(]+|$)'
         regular_expression = re.compile(regex_string, re.IGNORECASE)
         result = regular_expression.sub(r'\g<operator>' + new_keyword + r'\g<end>', query)

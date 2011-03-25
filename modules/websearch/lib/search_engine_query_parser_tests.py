@@ -690,41 +690,46 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
             inv_search = "year:2012-12-21"
             self._compare_searches(inv_search, spi_search)
 
-    def test_spires_syntax_detected_f(self):
-        """SPIRES search syntax - test detection f t p"""
-        # trac #261
-        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
-        spi_search = converter.is_applicable("f t p")
-        self.assertEqual(spi_search, True)
-
-    def test_spires_syntax_detected_fin(self):
-        """SPIRES search syntax - test detection fin t p"""
-        # trac #261
-        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
-        spi_search = converter.is_applicable("fin t p")
-        self.assertEqual(spi_search, True)
-
-    def test_spires_syntax_detected_find(self):
-        """SPIRES search syntax - test detection find t p"""
-        # trac #261
-        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
-        spi_search = converter.is_applicable("find t p")
-        self.assertEqual(spi_search, True)
-
-    def test_spires_syntax_detected_invenio(self):
-        """SPIRES search syntax - test detection Not SPIRES"""
-        # trac #261
-        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
-        inv_search = converter.is_applicable("t:p a:c")
-        self.assertEqual(inv_search, False)
-
     def test_spires_keyword_distribution_before_conjunctions(self):
         """SPIRES search syntax - test find journal phys.lett 0903 024 => journal:phys.lett and journal:0903 and journal:024"""
-        # trac 113
-        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
         spi_search = 'find journal phys.lett 0903 024'
         inv_search = '(journal:phys.lett and journal:0903 and journal:024)'
         self._compare_searches(inv_search, spi_search)
+
+    def test_simple_syntax_mixing(self):
+        """SPIRES and invenio search syntax - find a ellis and citedby:hawking"""
+        combo_search = "find a ellis and citedby:hawking"
+        inv_search = "author:ellis citedby:hawking"
+        self._compare_searches(inv_search, combo_search)
+
+    def test_author_first_syntax_mixing(self):
+        """SPIRES and invenio search syntax - find a dixon, l.j. cited:10->52"""
+        combo_search = 'find a dixon, l.j. cited:10->52'
+        inv_search = 'author:"dixon, l* j*" cited:10->52'
+        self._compare_searches(inv_search, combo_search)
+
+    def test_minus_boolean_syntax_mixing(self):
+        """SPIRES and invenio search syntax - find a ellis -title:muon"""
+        combo_search = 'find a ellis -title:muon'
+        inv_search = 'author:ellis -title:muon'
+        self._compare_searches(inv_search, combo_search)
+
+    def test_plus_boolean_syntax_mixing(self):
+        """SPIRES and invenio search syntax - find a ellis +title:muon"""
+        combo_search = 'find a ellis +title:muon'
+        inv_search = 'author:ellis title:muon'
+        self._compare_searches(inv_search, combo_search)
+
+    def test_second_level_syntax_mixing(self):
+        """SPIRES and invenio search syntax - find a ellis refersto:author:hawking"""
+        combo_search = 'find a ellis refersto:author:hawking'
+        inv_search = 'author:ellis refersto:author:hawking'
+        self._compare_searches(inv_search, combo_search)
+
+    def test_only_invenio_syntax(self):
+        """invenio search syntax - author:ellis title:ellis"""
+        inv_search = 'author:ellis title:quark'
+        self._compare_searches(inv_search, inv_search)
 
 TEST_SUITE = make_test_suite(TestSearchQueryParenthesisedParser,
                              TestSpiresToInvenioSyntaxConverter,
