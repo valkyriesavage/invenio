@@ -1962,12 +1962,9 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
     """
     _ = gettext_set_language(ln)
     spires_syntax_converter = SpiresToInvenioSyntaxConverter()
-    spires_syntax_query = False
 
     # if the pattern uses SPIRES search syntax, convert it to Invenio syntax
-    if spires_syntax_converter.is_applicable(p):
-        spires_syntax_query = True
-        p = spires_syntax_converter.convert_query(p)
+    p = spires_syntax_converter.convert_query(p)
 
     # sanity check: do not call parenthesised parser for search terms
     # like U(1):
@@ -1993,7 +1990,7 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
             current_operator = parsing_result[index]
             current_pattern = parsing_result[index+1]
 
-            if CFG_INSPIRE_SITE and spires_syntax_query:
+            if CFG_INSPIRE_SITE:
                 # setting ap=0 to turn off approximate matching for 0 results.
                 # Doesn't work well in combinations.
                 # FIXME: The right fix involves collecting statuses for each

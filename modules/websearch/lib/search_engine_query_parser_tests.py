@@ -159,6 +159,11 @@ class TestSearchQueryParenthesisedParser(unittest.TestCase):
         self.assertEqual(self.parser.parse_query('"expr1" (expr2) expr3'),
                          ['+', '"expr1"', '+', 'expr2', '+', 'expr3'])
 
+    def test_sqpp_quoted_expr1_arrow_quoted_expr2(self):
+        """SearchQueryParenthesisedParser = \"expr1\"->\"expr2\""""
+        self.assertEqual(self.parser.parse_query('"expr1"->"expr2"'),
+                         ['+', '"expr1"', '+', '->', '+', '"expr2"'])
+
     def test_sqpp_paren_expr1_expr2_paren_expr3_or_expr4(self):
         """SearchQueryParenthesisedParser - (expr1) expr2 (expr3) | expr4"""
         # test parsing of queries with missing operators.
@@ -330,6 +335,96 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
                                   """SPIRES parsed as %s instead of %s""" % \
                                   (repr(result_obtained), repr(result_wanted))
         return
+
+    def test_is_applicable_detects_spires_with_find(self):
+        """SPIRES syntax - test detection find a ellis"""
+        query = "find a ellis"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertTrue(converter.is_applicable(query))
+
+    def test_is_applicable_detects_spires_no_find(self):
+        """SPIRES syntax - test detection a ellis and t quark"""
+        query = "a ellis and t quark"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertTrue(converter.is_applicable(query))
+
+    def test_is_applicable_detects_spires_capitalized_find(self):
+        """SPIRES syntax - test is_applicable_detects FIND A ELLIS"""
+        query = "FIND A ELLIS"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertTrue(converter.is_applicable(query))
+
+    def test_is_applicable_detects_non_spires(self):
+        """SPIRES search syntax - test detection author:ellis title:quark"""
+        query = "author:ellis title:quark"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertFalse(converter.is_applicable(query))
+
+    def test_is_applicable_detects_fin(self):
+        """SPIRES search syntax - test detection fin t p"""
+        query = "fin t p"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertTrue(converter.is_applicable(query))
+
+    def test_is_applicable_detects_f(self):
+        """SPIRES search syntax - test detection f t p"""
+        query = "f t p"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertTrue(converter.is_applicable(query))
+
+    def test_is_applicable_detects_fin(self):
+        """SPIRES search syntax - test detection fin t p"""
+        query = "fin t p"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertTrue(converter.is_applicable(query))
+
+    def test_get_search_mode_detects_spires(self):
+        """SPIRES search syntax - test detection find a cow"""
+        query = "find a cow"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._get_search_mode(query), 'SPIRES')
+
+    def test_get_search_mode_detects_spires_no_find(self):
+        """SPIRES search syntax - test detection a cow t dog"""
+        query = "a cow t dog"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._get_search_mode(query), 'SPIRES')
+
+    def test_get_search_mode_detects_invenio(self):
+        """invenio search syntax - test detection author:cow"""
+        query = "author:cow"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._get_search_mode(query), 'invenio')
+
+    def test_get_search_mode_detects_neither(self):
+        """googley search syntax - test detection duck"""
+        query = "duck"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._get_search_mode(query), 'neither')
+
+    def test_query_split_only_spires(self):
+        """SPIRES search syntax - test split find a moose and t cow"""
+        query = "find a moose and t cow"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._split_query(query), [query])
+
+    def test_query_split_only_invenio(self):
+        """invenio search syntax - test split author:moose title:cow"""
+        query = "author:moose title:cow"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._split_query(query), [query])
+        
+    def test_query_split_mixed_syntaxes(self):
+        """SPIRES and invenio search syntax - test split author:moose and t cow"""
+        query = "author:moose and t cow"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._split_query(query), ['author:moose', 'and t cow'])
+
+    def test_query_split_mixed_syntaxes_vague(self):
+        """SPIRES and invenio search syntax - test split author:moose and not deer and t donkey"""
+        query = "author:moose and not deer and t donkey"
+        converter = search_engine_query_parser.SpiresToInvenioSyntaxConverter()
+        self.assertEqual(converter._split_query(query), ['author:moose and not deer', 'and t donkey'])
 
     def test_operators(self):
         """SPIRES search syntax - find a ellis and t shapes"""
@@ -729,6 +824,36 @@ class TestSpiresToInvenioSyntaxConverter(unittest.TestCase):
     def test_only_invenio_syntax(self):
         """invenio search syntax - author:ellis title:ellis"""
         inv_search = 'author:ellis title:quark'
+        self._compare_searches(inv_search, inv_search)
+
+    def test_invenio_syntax_only_with_single_quotes(self):
+        """invenio search syntax - author:'Ellis, Z'"""
+        inv_search = "author:'Ellis, Z'"
+        self._compare_searches(inv_search, inv_search)
+
+    def test_invenio_syntax_only_second_level(self):
+        """invenio search syntax - citedby:reportnumber:hep-th/0205061"""
+        inv_search = 'citedby:reportnumber:hep-th/0205061'
+        self._compare_searches(inv_search, inv_search)
+
+    def test_invenio_syntax_only_second_level_with_quotes(self):
+        """invenio search syntax - refersto:author:\"Klebanov, I\""""
+        inv_search = 'refersto:author:"Klebanov, I"'
+        self._compare_searches(inv_search, inv_search)
+
+    def test_invenio_syntax_only_boolean(self):
+        """invenio search syntax - author:ellis and not title:hadronic and not title:collisions"""
+        inv_search = "author:ellis and not title:hadronic and not title:collisions"
+        self._compare_searches(inv_search, inv_search)
+
+    def tests_invenio_syntax_only_boolean_implicit(self):
+        """invenio search syntax - title:ellisz author:ellisz"""
+        inv_search = "title:ellisz author:ellisz"
+        self._compare_searches(inv_search, inv_search)
+
+    def test_invenio_syntax_only_no_spires_equivalent(self):
+        """invenio search syntax - isbn:\"0387940758\""""
+        inv_search = 'isbn:"0387940758"'
         self._compare_searches(inv_search, inv_search)
 
 TEST_SUITE = make_test_suite(TestSearchQueryParenthesisedParser,

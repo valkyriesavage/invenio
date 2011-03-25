@@ -132,7 +132,7 @@ class SearchQueryParenthesisedParser(object):
 
         def filter_front_ands(toklist):
             """Filter out extra logical connectives and whitespace from the front."""
-            while toklist[0] == '+' or toklist[0] == '|' or toklist[0] == '':
+            while toklist and (toklist[0] == '+' or toklist[0] == '|' or toklist[0] == ''):
                 toklist = toklist[1:]
             return toklist
 
@@ -257,18 +257,12 @@ class SearchQueryParenthesisedParser(object):
 
         querytokens = []
         current_position = 0
-        re_quotepairs = re.compile(r'[^\\](".*?[^\\]")|[^\\](\'.*?[^\\]\')')
 
-        for match in re_quotepairs.finditer(query):
-            # special case for when our regexp captures a single char before
-            # the quotes.  This is faster (in development time and code)
-            # than a much more complicated and complete regexp or using an
-            # FSM for quote balancing.  XXX: But is there a better way?
+        re_quotes_match = re.compile(r'(?![\\])(".*?[^\\]")' + r"|(?![\\])('.*?[^\\]')")
+
+        for match in re_quotes_match.finditer(query):
             match_start = match.start()
             quoted_region = match.group(0).strip()
-            if quoted_region[0] not in "'\"":
-                match_start += 1            # capture char 0 in unquoted below
-                quoted_region = quoted_region[1:]
 
             # clean the content after the previous quotes and before current quotes
             unquoted = query[current_position : match_start]
@@ -278,7 +272,7 @@ class SearchQueryParenthesisedParser(object):
             # labels, e.g., 'title:"compton scattering"' becomes
             # ['title:', '"compton scattering"'] rather than ['title:"compton scattering"']
             # This corrects for that.
-            if querytokens[-1][-1] == ':':
+            if querytokens and querytokens[0] and querytokens[-1][-1] == ':':
                 querytokens[-1] += quoted_region
             else:
                 # add our newly tokenized content to the token list
@@ -356,7 +350,7 @@ class SearchQueryParenthesisedParser(object):
                 self.__tl_idx += 1
 
             # If we have an extra start symbol, remove the default one
-            if parsed_values[1] in op_symbols:
+            if len(parsed_values)>1 and parsed_values[1] in op_symbols:
                 parsed_values = parsed_values[1:]
             return parsed_values
 
@@ -571,11 +565,14 @@ class SpiresToInvenioSyntaxConverter:
         for higher performance."""
 
         # regular expression that matches find and family at the beginning of a search
-        self._re_find_et_al_match = re.compile('^find |^fin |^f ')
+        self._re_find_et_al_match = re.compile('^find |^fin |^f ', re.IGNORECASE)
+
+        # regular expression that matches boolean operators that might indicate context change
+        self._re_boolean_operator_separated_sections = re.compile(r'(?P<leadingop>\band not |\band |\bor |\bnot |^)\s*(?P<content>.*?)\s*(?= and not | and | or | not |$)', re.IGNORECASE)
 
         # regular expression that matches the contents in single and double quotes
         # taking in mind if they are escaped.
-        self._re_quotes_match = re.compile('[^\\\\](".*?[^\\\\]")|[^\\\\](\'.*?[^\\\\]\')')
+        self._re_quotes_match = re.compile(r'(?![\\])(".*?[^\\]")' + r"|(?![\\])('.*?[^\\]')")
 
         # match cases where a keyword distributes across a conjunction
         self._re_distribute_keywords = re.compile(r'(\b|^)(?P<keyword>\S*:)(?P<content>.+?)\s*(?P<combination>and not | and | or | not )\s*(?P<last_content>[^:]*?)(?= and not | and | or | not |$)', re.IGNORECASE)
@@ -585,13 +582,16 @@ class SpiresToInvenioSyntaxConverter:
         self._re_topcite_match = re.compile(r'(?P<x>cited:\d+)\+')
 
         # regular expression that matches author patterns
-        self._re_author_match = re.compile(r'\bauthor:\s*(?P<name>.+?)\s*(?= and not | and | or | not |$)', re.IGNORECASE)
+        # and author patterns with second-order ops on top
+        # and does not match authors with double quotes around their names,
+        # as those should not be touched
+        self._re_author_match = re.compile(r'\b((?P<secondorderop>[^\s]+:)?)author:\s*(?!"|\')(?P<name>.+?)(?!"|\')\s*(?= and not | and | or | not |$)', re.IGNORECASE)
 
         # regular expression that matches exact author patterns
         # the group defined in this regular expression is used in method
         # _convert_spires_exact_author_search_to_invenio_author_search(...)
         # in case of changes correct also the code in this method
-        self._re_exact_author_match = re.compile(r'\bexactauthor:(?P<author_name>[^\'\"].*?[^\'\"]\b)(?= and not | and | or | not |$)', re.IGNORECASE)
+        self._re_exact_author_match = re.compile(r'\b((?P<secondorderop>[^\s]+:)?)exactauthor:(?P<author_name>(?!"|\').*?(?!"|\')\b)(?= and not | and | or | not |$)', re.IGNORECASE)
 
         # match search term, its content (words that are searched) and
         # the operator preceding the term.
@@ -615,42 +615,102 @@ class SpiresToInvenioSyntaxConverter:
         self._re_pattern_regexp_quotes = re.compile("\/(.*?)\/")
         self._re_pattern_space = re.compile("__SPACE__")
 
+    def _get_search_mode(self, query):
+        """SPIRES or invenio?"""
+        if self._re_find_et_al_match.match(query):
+            return "SPIRES"
+
+        if ':' in query:
+            return "invenio"
+
+        for use in self._SPIRES_TO_INVENIO_KEYWORDS_MATCHINGS.keys():
+            if query.startswith(use + ' '):
+                return "SPIRES"
+
+        return "neither"
+
+    def is_applicable(self, query):
+        """Do we think this query uses SPIRES syntax?"""
+
+        if self._re_find_et_al_match.match(query):
+            return True
+        if not ':' in query:
+            return True
+        
+        return False
+
+    def _split_query(self, query):
+        """Split the query into chunks that are either all invenio
+        or all SPIRES, syntax-wise"""
+
+        if '(' in query:
+            return [query]
+
+        pieces = []
+        current_mode = self._get_search_mode(query)
+
+        for match in self._re_boolean_operator_separated_sections.finditer(query):
+            leading_op = match.group('leadingop')
+            content = match.group('content')
+
+            previous_mode = current_mode
+            current_mode = self._get_search_mode(content)
+
+            if current_mode == 'neither':
+                current_mode = previous_mode
+
+            if current_mode == previous_mode and pieces:
+                pieces[-1] += ' ' + leading_op + content
+                continue
+            
+            pieces.append(leading_op + content)
+
+        return pieces
+
     def convert_query(self, query):
-        """Convert SPIRES syntax queries to Invenio syntax.
+        """Convert SPIRES syntax queries to Invenio syntax."""
+       
+        processed_pieces = []
 
-        Do nothing to queries not in SPIRES syntax."""
+        for piece in self._split_query(query):
 
-        # SPIRES syntax allows searches with 'find' or 'fin'.
-        if self.is_applicable(query):
+            if not self.is_applicable(piece):
+                processed_pieces.append(piece)
+                continue
 
-            # Everywhere else make the assumption that all and only queries
-            # starting with 'find' are SPIRES queries.  Turn fin into find.
-            query = self._re_spires_find_keyword.sub(lambda m: 'find '+m.group('query'), query)
+            # get rid of find junk
+            piece = re.sub(self._re_find_et_al_match, '', piece)
 
             # these calls are before keywords replacement because when keywords
             # are replaced, date keyword is replaced by specific field search
             # and the DATE keyword is not match in DATE BEFORE or DATE AFTER
-            query = self._convert_spires_date_before_to_invenio_span_query(query)
-            query = self._convert_spires_date_after_to_invenio_span_query(query)
+            piece = self._convert_spires_date_before_to_invenio_span_query(piece)
+            piece = self._convert_spires_date_after_to_invenio_span_query(piece)
+
+            # standardizing invenio keywords before replacing with spires keywords
+            # means that we can mix syntaxes
+            piece = self._standardize_already_invenio_keywords(piece)
 
             # call to _replace_spires_keywords_with_invenio_keywords should be at the
             # beginning because the next methods use the result of the replacement
-            query = self._standardize_already_invenio_keywords(query)
-            query = self._replace_spires_keywords_with_invenio_keywords(query)
-            query = self._remove_spaces_in_comma_separated_journal(query)
-            query = self._distribute_keywords_across_combinations(query)
+            piece = self._replace_spires_keywords_with_invenio_keywords(piece)
+            piece = self._remove_spaces_in_comma_separated_journal(piece)
+            piece = self._distribute_keywords_across_combinations(piece)
 
-            query = self._convert_dates(query)
-            query = self._convert_irns_to_spires_irns(query)
-            query = self._convert_topcite_to_cited(query)
-            query = self._convert_spires_author_search_to_invenio_author_search(query)
-            query = self._convert_spires_exact_author_search_to_invenio_author_search(query)
-            query = self._convert_spires_truncation_to_invenio_truncation(query)
-            query = self._expand_search_patterns(query)
+            piece = self._convert_dates(piece)
+            piece = self._convert_irns_to_spires_irns(piece)
+            piece = self._convert_topcite_to_cited(piece)
+            piece = self._convert_spires_author_search_to_invenio_author_search(piece)
+            piece = self._convert_spires_exact_author_search_to_invenio_author_search(piece)
+            piece = self._convert_spires_truncation_to_invenio_truncation(piece)
+            piece = self._expand_search_patterns(piece)
 
-            # remove FIND in the beginning of the query as it is not necessary in Invenio
-            query = query[4:]
-            query = query.strip()
+            processed_pieces.append(piece)
+
+        query = ' '.join(processed_pieces)
+
+        query = self._remove_excess_operators(query)
+        query = re.sub('\s+', ' ', query)
 
         return query
 
@@ -865,7 +925,10 @@ class SpiresToInvenioSyntaxConverter:
         result = ''
         current_position = 0
         for match in self._re_author_match.finditer(query):
-            result += query[current_position : match.start() ]
+            if not match.group('secondorderop'):
+                result += query[current_position : match.start()]
+            else:
+                result += query[current_position : match.end('secondorderop')]
             scanned_name = NameScanner.scan(match.group('name'))
             author_atoms = self._create_author_search_pattern_from_fuzzy_name_dict(scanned_name)
             if author_atoms.find(' ') == -1:
@@ -948,7 +1011,7 @@ class SpiresToInvenioSyntaxConverter:
         unique_invenio_keywords.remove('') # for the ones that don't have invenio equivalents
 
         for invenio_keyword in unique_invenio_keywords:
-            query = re.sub("(?<!^)(?<!... \+|... -| and |. or | not |....:)"+invenio_keyword, "and "+invenio_keyword, query)
+            query = re.sub("(?<!... \+|... -| and |. or | not |....:)"+invenio_keyword, "and "+invenio_keyword, query)
             query = re.sub("\+"+invenio_keyword, "and "+invenio_keyword, query)
             query = re.sub("-"+invenio_keyword, "and not "+invenio_keyword, query)
 
@@ -1021,4 +1084,12 @@ class SpiresToInvenioSyntaxConverter:
                    match.group('last_content')
 
         query = self._re_distribute_keywords.sub(create_replacement_pattern, query)
+        return query
+
+    def _remove_excess_operators(self, query):
+        """get rid of extraneous operators, e.g. 'this and and that' or 'and this and that'"""
+
+        if query.startswith('and '):
+            query = query[len('and '):]
+
         return query
