@@ -624,6 +624,13 @@ class WebSearchTestSearch(unittest.TestCase):
             if not same_urls_p(l.url, make_url('/search', **q)):
                 self.fail(repr((l.url, make_url('/search', **q))))
 
+    def test_not_operator_does_not_block_other_terms(self):
+        """ websearch - check that searching muon -foo == searching muon """
+
+        self.assertEqual([],
+                         test_web_page_content(make_url('/search?p=muon+-foo&of=id'),
+                                               expected_text='[12, 67]'))
+
     def test_similar_authors(self):
         """ websearch - test similar authors box """
 

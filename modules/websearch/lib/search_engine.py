@@ -2015,11 +2015,6 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
         spires_syntax_query = True
         p = spires_syntax_converter.convert_query(p)
 
-    # sanity check: do not call parenthesised parser for search terms
-    # like U(1):
-    if not re_pattern_parens.search(p):
-        return search_pattern(req, p, f, m, ap, of, verbose, ln, display_nearest_terms_box=display_nearest_terms_box, wl=wl)
-
     # Try searching with parentheses
     try:
         parser = SearchQueryParenthesisedParser()
@@ -2035,16 +2030,13 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
         # go through every pattern
         # calculate hitset for it
         # combine pattern's hitset with the result using the corresponding operator
-        for index in xrange(0, len(parsing_result)-1, 2 ):
+        for index in xrange(0, len(parsing_result)-1, 2):
             current_operator = parsing_result[index]
             current_pattern = parsing_result[index+1]
 
             if CFG_INSPIRE_SITE and spires_syntax_query:
                 # setting ap=0 to turn off approximate matching for 0 results.
                 # Doesn't work well in combinations.
-                # FIXME: The right fix involves collecting statuses for each
-                #        hitset, then showing a nearest terms box exactly once,
-                #        outside this loop.
                 ap = 0
                 display_nearest_terms_box=False
 
@@ -2061,9 +2053,17 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
             else:
                 assert False, "Unknown operator in search_pattern_parenthesised()"
 
+        if len(result_hitset) == 0:
+            # somewhat less-than-elegantly, we will just defer to using the whole
+            # query, since it does the things the tests expect
+            # XXX: perhaps we should model the logic around line 1800 of this file
+            # to just display the box if we need to and, e.g.,
+            # print_warning(req, create_nearest_terms_box(urlargd, p, f))
+            return search_pattern(req, p, f, m, ap, of, verbose, ln, display_nearest_terms_box=display_nearest_terms_box, wl=wl)
+
         return result_hitset
 
-    # If searching with parenteses fails, perform search ignoring parentheses
+    # If searching with parentheses fails, perform search ignoring parentheses
     except SyntaxError:
 
         print_warning(req, _("Search syntax misunderstood. Ignoring all parentheses in the query. If this doesn't help, please check your search and try again."))
