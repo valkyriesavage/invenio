@@ -132,7 +132,7 @@ class SearchQueryParenthesisedParser(object):
 
         def filter_front_ands(toklist):
             """Filter out extra logical connectives and whitespace from the front."""
-            while toklist[0] == '+' or toklist[0] == '|' or toklist[0] == '':
+            while toklist and (toklist[0] == '+' or toklist[0] == '|' or toklist[0] == ''):
                 toklist = toklist[1:]
             return toklist
 
@@ -349,7 +349,7 @@ class SearchQueryParenthesisedParser(object):
                 self.__tl_idx += 1
 
             # If we have an extra start symbol, remove the default one
-            if parsed_values[1] in op_symbols:
+            if len(parsed_values) > 1 and parsed_values[1] in op_symbols:
                 parsed_values = parsed_values[1:]
             return parsed_values
 

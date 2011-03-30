@@ -1695,9 +1695,9 @@ def search_pattern(req=None, p=None, f=None, m=None, ap=0, of="id", verbose=0, l
         # fulltext/caption search warnings for INSPIRE:
         fields_to_be_searched = [f for o,p,f,m in basic_search_units]
         if 'fulltext' in fields_to_be_searched:
-            print_warning(req, _("Warning: full-text search is only available for a subset of papers mostly from 2006-2010."))
+            print_warning(req, _("Warning: full-text search is only available for a subset of papers mostly from 2006-2011."))
         elif 'caption' in fields_to_be_searched:
-            print_warning(req, _("Warning: figure caption search is only available for a subset of papers mostly from 2008-2010."))
+            print_warning(req, _("Warning: figure caption search is only available for a subset of papers mostly from 2008-2011."))
 
     for idx_unit in xrange(len(basic_search_units)):
         bsu_o, bsu_p, bsu_f, bsu_m = basic_search_units[idx_unit]
@@ -1839,11 +1839,6 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
         spires_syntax_query = True
         p = spires_syntax_converter.convert_query(p)
 
-    # sanity check: do not call parenthesised parser for search terms
-    # like U(1):
-    if not _re_pattern_parens.search(p):
-        return search_pattern(req, p, f, m, ap, of, verbose, ln, display_nearest_terms_box=display_nearest_terms_box, wl=wl)
-
     # Try searching with parentheses
     try:
         parser = SearchQueryParenthesisedParser()
@@ -1859,16 +1854,13 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
         # go through every pattern
         # calculate hitset for it
         # combine pattern's hitset with the result using the corresponding operator
-        for index in xrange(0, len(parsing_result)-1, 2 ):
+        for index in xrange(0, len(parsing_result)-1, 2):
             current_operator = parsing_result[index]
             current_pattern = parsing_result[index+1]
 
             if CFG_INSPIRE_SITE and spires_syntax_query:
                 # setting ap=0 to turn off approximate matching for 0 results.
                 # Doesn't work well in combinations.
-                # FIXME: The right fix involves collecting statuses for each
-                #        hitset, then showing a nearest terms box exactly once,
-                #        outside this loop.
                 ap = 0
                 display_nearest_terms_box=False
 
@@ -1884,10 +1876,18 @@ def search_pattern_parenthesised(req=None, p=None, f=None, m=None, ap=0, of="id"
                 result_hitset = result_hitset | current_hitset
             else:
                 assert False, "Unknown operator in search_pattern_parenthesised()"
+        
+        if len(result_hitset) == 0:
+            # somewhat less-than-elegantly, we will just defer to using the whole
+            # query, since it does the things the tests expect
+            # XXX: perhaps we should model the logic around line 1800 of this file
+            # to just display the box if we need to and, e.g.,
+            # print_warning(req, create_nearest_terms_box(urlargd, p, f))
+            return search_pattern(req, p, f, m, ap, of, verbose, ln, display_nearest_terms_box=display_nearest_terms_box, wl=wl)
 
         return result_hitset
 
-    # If searching with parenteses fails, perform search ignoring parentheses
+    # If searching with parentheses fails, perform search ignoring parentheses
     except SyntaxError:
 
         print_warning(req, _("Search syntax misunderstood. Ignoring all parentheses in the query. If this doesn't help, please check your search and try again."))
@@ -2029,6 +2029,7 @@ def search_unit_in_idxphrases(p, f, type, wl=0):
     set = HitSet() # will hold output result set
     set_used = 0 # not-yet-used flag, to be able to circumvent set operations
     limit_reached = 0 # flag for knowing if the query limit has been reached
+    use_query_limit = False # flag for knowing if to limit the query results or not
     # deduce in which idxPHRASE table we will search:
     idxphraseX = "idxPHRASE%02dF" % get_index_id_from_field("anyfield")
     if f:
@@ -2041,16 +2042,19 @@ def search_unit_in_idxphrases(p, f, type, wl=0):
     if type == 'r':
         query_addons = "REGEXP %s"
         query_params = (p,)
+        use_query_limit = True
     else:
         p = string.replace(p, '*', '%') # we now use '*' as the truncation character
         ps = string.split(p, "->", 1) # check for span query:
         if len(ps) == 2 and not (ps[0].endswith(' ') or ps[1].startswith(' ')):
             query_addons = "BETWEEN %s AND %s"
             query_params = (ps[0], ps[1])
+            use_query_limit = True
         else:
             if string.find(p, '%') > -1:
                 query_addons = "LIKE %s"
                 query_params = (p,)
+                use_query_limit = True
             else:
                 query_addons = "= %s"
                 query_params = (p,)
@@ -2062,12 +2066,15 @@ def search_unit_in_idxphrases(p, f, type, wl=0):
             query_params_washed += (wash_author_name(query_param),)
         query_params = query_params_washed
     # perform search:
-    try:
-        res = run_sql_with_limit("SELECT term,hitlist FROM %s WHERE term %s" % (idxphraseX, query_addons),
+    if use_query_limit:
+        try:
+            res = run_sql_with_limit("SELECT term,hitlist FROM %s WHERE term %s" % (idxphraseX, query_addons),
                       query_params, wildcard_limit=wl)
-    except InvenioDbQueryWildcardLimitError, excp:
-        res = excp.res
-        limit_reached = 1 # set the limit reached flag to true
+        except InvenioDbQueryWildcardLimitError, excp:
+            res = excp.res
+            limit_reached = 1 # set the limit reached flag to true
+    else:
+        res = run_sql("SELECT term,hitlist FROM %s WHERE term %s" % (idxphraseX, query_addons), query_params)
     # fill the result set:
     for word, hitlist in res:
         hitset_bibphrase = HitSet(hitlist)
@@ -2093,6 +2100,7 @@ def search_unit_in_bibxxx(p, f, type, wl=0):
         return search_unit_in_bibwords(p, f, wl=wl)
     p_orig = p # saving for eventual future 'no match' reporting
     limit_reached = 0 # flag for knowing if the query limit has been reached
+    use_query_limit = False  # flag for knowing if to limit the query results or not
     query_addons = "" # will hold additional SQL code for the query
     query_params = () # will hold parameters for the query (their number may vary depending on TYPE argument)
     # wash arguments:
@@ -2100,16 +2108,19 @@ def search_unit_in_bibxxx(p, f, type, wl=0):
     if type == 'r':
         query_addons = "REGEXP %s"
         query_params = (p,)
+        use_query_limit = True
     else:
         p = string.replace(p, '*', '%') # we now use '*' as the truncation character
         ps = string.split(p, "->", 1) # check for span query:
         if len(ps) == 2 and not (ps[0].endswith(' ') or ps[1].startswith(' ')):
             query_addons = "BETWEEN %s AND %s"
             query_params = (ps[0], ps[1])
+            use_query_limit = True
         else:
             if string.find(p, '%') > -1:
                 query_addons = "LIKE %s"
                 query_params = (p,)
+                use_query_limit = True
             else:
                 query_addons = "= %s"
                 query_params = (p,)
@@ -2138,12 +2149,16 @@ def search_unit_in_bibxxx(p, f, type, wl=0):
                     query_params = tuple(int(param) for param in query_params)
                 except ValueError:
                     return HitSet()
-            try:
-                res = run_sql_with_limit("SELECT id FROM bibrec WHERE id %s" % query_addons,
+            if use_query_limit:
+                try:
+                    res = run_sql_with_limit("SELECT id FROM bibrec WHERE id %s" % query_addons,
                               query_params, wildcard_limit=wl)
-            except InvenioDbQueryWildcardLimitError, excp:
-                res = excp.res
-                limit_reached = 1 # set the limit reached flag to true
+                except InvenioDbQueryWildcardLimitError, excp:
+                    res = excp.res
+                    limit_reached = 1 # set the limit reached flag to true
+            else:
+                res = run_sql("SELECT id FROM bibrec WHERE id %s" % query_addons,
+                              query_params)
         else:
             query = "SELECT bibx.id_bibrec FROM %s AS bx LEFT JOIN %s AS bibx ON bx.id=bibx.id_bibxxx WHERE bx.value %s" % \
                     (bx, bibx, query_addons)
@@ -2151,19 +2166,19 @@ def search_unit_in_bibxxx(p, f, type, wl=0):
                 # wildcard query, or only the beginning of field 't'
                 # is defined, so add wildcard character:
                 query += " AND bx.tag LIKE %s"
+                query_params = query_params + (t + '%',)
+            else:
+                # exact query for 't':
+                query += " AND bx.tag=%s"
+                query_params = query_params + (t,)
+            if use_query_limit:
                 try:
-                    res = run_sql_with_limit(query, query_params + (t + '%',), wildcard_limit=wl)
+                    res = run_sql_with_limit(query, query_params, wildcard_limit=wl)
                 except InvenioDbQueryWildcardLimitError, excp:
                     res = excp.res
                     limit_reached = 1 # set the limit reached flag to true
             else:
-                # exact query for 't':
-                query += " AND bx.tag=%s"
-                try:
-                    res = run_sql_with_limit(query, query_params + (t,), wildcard_limit=wl)
-                except InvenioDbQueryWildcardLimitError, excp:
-                    res = excp.res
-                    limit_reached = 1 # set the limit reached flag to true
+                res = run_sql(query, query_params)
         # fill the result set:
         for id_bibrec in res:
             if id_bibrec[0]:
@@ -4101,7 +4116,7 @@ def call_bibformat(recID, format="HD", ln=CFG_SITE_LANG, search_pattern=None, us
     keywords = []
     if search_pattern is not None:
         units = create_basic_search_units(None, str(search_pattern), None)
-        keywords = [unit[1] for unit in units if unit[0] != '-']
+        keywords = [unit[1] for unit in units if (unit[0] != '-' and unit[2] in [None, 'fulltext'])]
 
     out = format_record(recID,
                          of=format,
